@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>質問集ビューア（CSV/JSON対応・タグボタンあり）</title>
+  <style>
+    :root { --bg: #0f172a; --card: #111827; --muted:#94a3b8; --text:#e5e7eb; --accent:#22d3ee; }
+    html,body{height:100%;}
+    body{margin:0;background:linear-gradient(180deg,#0b1220,#0f172a);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Hiragino Kaku Gothic ProN",Meiryo,sans-serif;}
+    .wrap{max-width:960px;margin:32px auto;padding:0 16px;}
+    .card{background:rgba(17,24,39,.7);backdrop-filter: blur(6px); border:1px solid rgba(255,255,255,.08); border-radius:16px; padding:20px; box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    h1{font-size:clamp(20px,2.8vw,28px);margin:0 0 12px 0}
+    .muted{color:var(--muted)}
+    .controls{display:grid; gap:10px; grid-template-columns:1fr;}
+    .controls input[type="text"], .controls input[type="url"]{width:100%; padding:12px 14px; background:#0b1020; border:1px solid #263044; color:var(--text); border-radius:12px; outline:none}
+    .controls .row{display:grid; gap:10px; grid-template-columns:1fr auto; align-items:center}
+    .btn{appearance:none;border:1px solid #2b354a;background:#0d1628;color:var(--text);padding:10px 14px;border-radius:12px;cursor:pointer}
+    .btn:hover{border-color:#3b4763}
+    .grid{margin-top:16px; display:grid; gap:10px}
+    .item{border:1px solid #23304a; border-radius:14px; overflow:hidden; background:#0c1323}
+    .head{display:flex; gap:10px; align-items:flex-start; padding:12px 14px}
+    .id{flex:0 0 auto; font-weight:700; color:#9be8f7; background:#04202a; border:1px solid #113a47; padding:4px 8px; border-radius:8px;}
+    .title{flex:1 1 auto}
+    .title .clip{display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
+    details{border-top:1px solid #1b2336}
+    details[open]{background:#0a1020}
+    summary{list-style:none; padding:12px 14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center}
+    summary::-webkit-details-marker{display:none}
+    .count{font-variant-numeric: tabular-nums;}
+    .pill{display:inline-flex;align-items:center;gap:6px; padding:6px 10px; border:1px solid #26465a; background:#06121c; border-radius:999px; font-size:12px; color:#a7c3d8}
+    .flex{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+    .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; background:#0e1a2c; border:1px solid #283a5a; padding:2px 6px; border-radius:6px; color:#cdd9ed}
+    .footer{margin-top:18px; font-size:12px}
+    .loading{margin-top:14px;color:#bfe7ff}
+    .danger{color:#fda4af}
+    .filters{display:grid;gap:10px;margin-top:10px}
+    .filter-group{border:1px solid #22314a;background:#0b1222;border-radius:12px;padding:10px}
+    .filter-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+    .filter-title{font-size:13px;color:#c7d5e5}
+    .tags{display:flex;flex-wrap:wrap;gap:8px}
+    .tag{user-select:none;cursor:pointer;padding:6px 10px;border:1px solid #2a3a54;border-radius:999px;background:#0a1528;color:#cfe5ff;font-size:12px}
+    .tag[aria-pressed="true"]{border-color:#42c9f0;background:#062332;color:#e6fbff;box-shadow:0 0 0 2px rgba(66,201,240,.15) inset}
+    .clear-btn{font-size:12px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>質問集ビューア</h1>
+      <div class="muted">CSV/JSON（同一オリジン or CORS許可）から読み込み。タグ：大分類／属性／対象・関係性／情報カテゴリ／就活時間軸。</div>
+      <div style="height:8px"></div>
+      <div class="controls">
+        <div class="row">
+          <input id="dataUrl" type="url" placeholder="① データURL（CSVまたはJSON。相対パスOK）" />
+          <button id="loadBtn" class="btn">読み込む</button>
+        </div>
+        <input id="q" type="text" placeholder="② キーワードで検索（例：ロールモデル / 配慮 / グレーゾーン）」/>
+        <div class="flex">
+          <label class="pill"><input type="checkbox" id="caseSensitive"/> 大文字小文字を区別</label>
+          <label class="pill"><input type="checkbox" id="regex"/> 正規表現で検索</label>
+          <span class="pill count" id="stats">0件</span>
+          <label class="pill"><input type="file" id="localFile" accept=".csv,.json"/> ローカルで試す</label>
+          <button id="clearAll" class="btn">全解除</button>
+        </div>
+        <div class="filters" id="filters"></div>
+      </div>
+      <div id="loading" class="loading" hidden>読み込み中…</div>
+      <div id="error" class="loading danger" hidden></div>
+      <div id="list" class="grid" aria-live="polite"></div>
+      <div class="footer muted">
+        使い方：データファイル（CSV/JSON）をこのHTMLと同じフォルダに置き、<span class="kbd">data.csv</span> や <span class="kbd">qa.json</span> のように相対パスで指定するとCORS不要で確実です。<br>
+        もしくは <strong>GitHub Gist / GitHub Raw / Netlify / Vercel</strong> の直リンク（CORS許可）を使用してください。Google Drive直リンクはCORSの都合で失敗することがあります。
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script>
+    const listEl = document.getElementById('list');
+    const statsEl = document.getElementById('stats');
+    const loadingEl = document.getElementById('loading');
+    const errorEl = document.getElementById('error');
+    const qEl = document.getElementById('q');
+    const caseEl = document.getElementById('caseSensitive');
+    const regexEl = document.getElementById('regex');
+    const filtersEl = document.getElementById('filters');
+    const clearAllEl = document.getElementById('clearAll');
+
+    let rows = [];
+    let view = [];
+    let cols = [];
+
+    const TAG_GROUPS = [
+      {key:'大分類', match:/大分類/i},
+      {key:'属性', match:/属性/i},
+      {key:'対象・関係性', match:/(対象|関係)/},
+      {key:'情報カテゴリ', match:/情報.?カテゴリ/},
+      {key:'就活時間軸', match:/(就活|時間軸)/}
+    ];
+
+    let resolvedCols = {};
+    let selected = {};
+
+    function debounce(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t = setTimeout(()=>fn(...a), ms); } }
+
+    function detectType(u){
+      return /\.json($|\?)/i.test(u) ? 'json' : 'csv';
+    }
+
+    function loadUrl(u){
+      const kind = detectType(u);
+      loading(true);
+      errorEl.hidden = true;
+      if(kind==='json'){
+        fetch(u, {cache:'no-store'}).then(r=>{
+          if(!r.ok) throw new Error('HTTP '+r.status);
+          return r.json();
+        }).then(data=> onParsedJson(data))
+          .catch(err=> onError(err));
+      }else{
+        Papa.parse(u, { download:true, header:true, skipEmptyLines:true, complete:onParsedCsv, error:onPapaError });
+      }
+    }
+
+    function onParsedCsv(res){
+      loading(false);
+      if(!res?.data?.length){ showError('CSVが空でした'); return; }
+      rows = res.data.map(r=>fixRow(r));
+      afterLoad();
+    }
+
+    function onParsedJson(data){
+      loading(false);
+      if(!Array.isArray(data) || !data.length){ showError('JSONが空でした'); return; }
+      rows = data.map(r=>fixRow(r));
+      afterLoad();
+    }
+
+    function afterLoad(){
+      cols = Object.keys(rows[0]||{});
+      resolveTagColumns(cols);
+      buildFilters(rows);
+      view = rows.slice();
+      render(view);
+    }
+
+    function onPapaError(err){ onError(err); }
+    function onError(err){ showError('読み込みに失敗しました: ' + (err && err.message ? err.message : String(err))); }
+
+    function loading(b){ loadingEl.hidden = !b; errorEl.hidden = true; }
+    function showError(msg){ loading(false); errorEl.hidden=false; errorEl.textContent = msg; }
+
+    function render(items){
+      listEl.innerHTML = '';
+      const frag = document.createDocumentFragment();
+      items.forEach((r, i) => {
+        const id = r.ID ?? r.id ?? r.Id ?? r[cols[0]] ?? String(i+1);
+        const text = r.questions ?? r.Question ?? r.TEXT ?? r[cols[1]] ?? '';
+        const item = document.createElement('div');
+        item.className = 'item';
+        item.id = 'q-' + (id+'').replace(/[^\w-]+/g,'');
+        const tagsLine = TAG_GROUPS.map(g=> resolvedCols[g.key] && r[resolvedCols[g.key]] ? tagBadges(splitTags(r[resolvedCols[g.key]])).join(' ') : '').filter(Boolean).join(' ');
+        item.innerHTML = `
+          <div class="head">
+            <div class="id">${escapeHtml(id)}</div>
+            <div class="title"><div class="clip">${escapeHtml(text)}</div></div>
+          </div>
+          ${tagsLine? `<div class="head" style="padding-top:0"><div class="title"><div class="flex">${tagsLine}</div></div></div>`:''}
+          <details>
+            <summary>詳細を表示</summary>
+            <div style="padding:12px 14px; white-space:pre-wrap; line-height:1.6">${escapeHtml(text)}</div>
+          </details>`;
+        frag.appendChild(item);
+      });
+      listEl.appendChild(frag);
+      statsEl.textContent = `${items.length}件`;
+    }
+
+    function tagBadges(arr){ return arr.map(t=> `<span class="pill">${escapeHtml(t)}</span>`); }
+    function escapeHtml(s){ return (s==null?''+s:s+'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+
+    const applyFilter = debounce(() => {
+      const term = qEl.value.trim();
+      let textPred = ()=>true;
+      if(term){
+        try{
+          if(regexEl.checked){
+            const flags = caseEl.checked ? 'u' : 'iu';
+            const re = new RegExp(term, flags);
+            textPred = (t)=> re.test(t);
+          }else{
+            const needle = caseEl.checked ? term : term.toLowerCase();
+            textPred = (t)=> (caseEl.checked? t : t.toLowerCase()).includes(needle);
+          }
+        }catch(err){ errorEl.hidden=false; errorEl.textContent = '検索エラー: ' + err.message; return; }
+      }
+      const activeGroups = Object.entries(selected).filter(([,set])=> set && set.size);
+      const tagPred = (row)=>{
+        for(const [gKey, set] of activeGroups){
+          const col = resolvedCols[gKey];
+          const values = splitTags(row[col] ?? '');
+          if(values.length===0) return false;
+          if(!values.some(v=> set.has(v))) return false;
+        }
+        return true;
+      };
+      view = rows.filter(r => {
+        const text = (r.questions ?? r.Question ?? r.TEXT ?? r[cols[1]] ?? '').toString();
+        return textPred(text) && tagPred(r);
+      });
+      render(view);
+    }, 120);
+
+    document.getElementById('loadBtn').addEventListener('click', () => {
+      const u = document.getElementById('dataUrl').value.trim();
+      if(!u){ showError('データURLを入力してください'); return; }
+      loadUrl(u);
+      history.replaceState(null, '', '#src=' + encodeURIComponent(u));
+    });
+
+    // local file
+    document.getElementById('localFile').addEventListener('change', (e)=>{
+      const file = e.target.files?.[0];
+      if(!file) return;
+      loading(true);
+      const ext = (file.name.split('.').pop()||'').toLowerCase();
+      if(ext==='json'){
+        const reader = new FileReader();
+        reader.onload = () => {
+          try{ onParsedJson(JSON.parse(reader.result)); }catch(err){ onError(err); }
+        };
+        reader.onerror = onError;
+        reader.readAsText(file, 'utf-8');
+      }else{
+        Papa.parse(file, { header:true, skipEmptyLines:true, complete: onParsedCsv, error: onPapaError });
+      }
+    });
+
+    function fixRow(obj){
+      const keys = Object.keys(obj);
+      if(keys.length===1){
+        const k = keys[0];
+        const v = obj[k];
+        const m = typeof v === 'string' ? v.split(/\t|\s{2,}/) : null;
+        if(m && m.length>=2){ return { ID:m[0], questions:m.slice(1).join(' ') }; }
+      }
+      return obj;
+    }
+
+    function resolveTagColumns(all){
+      resolvedCols = {};
+      ['大分類','属性','対象・関係性','情報カテゴリ','就活時間軸'].forEach(label=>{
+        const hit = all.find(c=> new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).test(c));
+        if(hit) resolvedCols[label] = hit;
+        selected[label] = new Set();
+      });
+    }
+
+    function splitTags(val){
+      if(!val) return [];
+      return String(val).split(/[,、/／\|]/).map(s=> s.trim()).filter(Boolean);
+    }
+
+    function uniqueSorted(values){ return Array.from(new Set(values)).sort((a,b)=> a.localeCompare(b,'ja')); }
+
+    function buildFilters(rows){
+      filtersEl.innerHTML = '';
+      TAG_GROUPS.forEach(g=>{
+        const col = resolvedCols[g.key];
+        if(!col) return;
+        const opts = uniqueSorted(rows.flatMap(r=> splitTags(r[col])));
+        const group = document.createElement('div');
+        group.className = 'filter-group';
+        group.dataset.group = g.key;
+        group.innerHTML = `
+          <div class="filter-head">
+            <div class="filter-title">${g.key}</div>
+            <button class="btn clear-btn" data-clear>クリア</button>
+          </div>
+          <div class="tags" role="group" aria-label="${g.key}"></div>`;
+        const tagsDiv = group.querySelector('.tags');
+        opts.forEach(opt=>{
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'tag';
+          b.setAttribute('aria-pressed','false');
+          b.textContent = opt;
+          b.addEventListener('click', ()=>{
+            const set = selected[g.key];
+            const pressed = b.getAttribute('aria-pressed') === 'true';
+            if(pressed){ set.delete(opt); b.setAttribute('aria-pressed','false'); }
+            else { set.add(opt); b.setAttribute('aria-pressed','true'); }
+            applyFilter();
+          });
+          tagsDiv.appendChild(b);
+        });
+        group.querySelector('[data-clear]').addEventListener('click', ()=>{
+          selected[g.key].clear();
+          group.querySelectorAll('.tag[aria-pressed="true"]').forEach(el=> el.setAttribute('aria-pressed','false'));
+          applyFilter();
+        });
+        filtersEl.appendChild(group);
+      });
+    }
+
+    (function initFromHash(){
+      const m = location.hash.match(/#src=([^]+)$/);
+      if(m){ const u = decodeURIComponent(m[1]); document.getElementById('dataUrl').value = u; loadUrl(u); }
+    })();
+
+    clearAllEl?.addEventListener('click', ()=>{
+      qEl.value = '';
+      Object.keys(selected).forEach(k=> selected[k].clear());
+      document.querySelectorAll('.tag[aria-pressed="true"]').forEach(el=> el.setAttribute('aria-pressed','false'));
+      render(rows);
+      statsEl.textContent = `${rows.length}件`;
+    });
+  </script>
+</body>
+</html>
