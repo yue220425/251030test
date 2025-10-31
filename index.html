@@ -27,34 +27,29 @@
 
   <div class="toolbar">
     <input id="sheetUrl" class="input" type="text"
-      placeholder="例）data.csv（同階層） / https://example.com/data.csv または data.json のURL" />
+      placeholder="例）qa_questions_clean.json / data.csv（同階層） / 公開URL" />
     <button id="loadBtn" class="btn">読み込む</button>
   </div>
-  <div class="hint">同一オリジンのファイル推奨（GitHub Pagesなら <code>index.html</code> と同階層に <code>data.csv</code> を置く）</div>
+  <div class="hint">同一オリジン推奨（GitHub Pagesなら <code>index.html</code> と同階層に置く）</div>
   <div id="status" class="error"></div>
 
   <div id="table">ファイルを指定して「読み込む」を押してください。</div>
 
   <script>
     // ===== 設定 =====
-    // 初期表示で自動読込する既定の相対パス。必要に応じて qa_questions_clean.json 等に変更可。
-    const DEFAULT_SRC = 'qa_questions_clean.json';
+    const DEFAULT_SRC = 'qa_questions_clean.json'; // ←必要に応じて data.csv 等へ
 
     // ===== ユーティリティ =====
     const $ = (sel) => document.querySelector(sel);
-    const isJson = (s) => /\.json(\?|#|$)/i.test(s.trim());
+    const isJson = (s) => /\.json(\?|#|$)/i.test((s||'').trim());
 
-    const showError = (msg) => {
-      $('#status').textContent = msg || '';
-    };
-
+    const showError = (msg) => { $('#status').textContent = msg || ''; };
     const setLoading = (loading) => {
       $('#loadBtn').disabled = !!loading;
       $('#table').setAttribute('aria-busy', loading ? 'true' : 'false');
     };
 
     const parseQueryHash = () => {
-      // URLハッシュ #src=... を拾う
       const h = location.hash.slice(1);
       if (!h) return null;
       const params = new URLSearchParams(h);
@@ -65,17 +60,14 @@
       history.replaceState(null, '', '#src=' + encodeURIComponent(src));
     };
 
-    // ===== レンダリング =====
-    let gridInstance = null;
-
+    // ===== レンダリング（毎回新しい mount に描画して __k エラー回避） =====
     const renderGrid = (columns, rows) => {
-      // 既存のGridを破棄
-      if (gridInstance && gridInstance.destroy) {
-        gridInstance.destroy();
-        gridInstance = null;
-      }
-      // Grid.js に渡す
-      gridInstance = new gridjs.Grid({
+      const host = document.getElementById('table');
+      host.innerHTML = '';                    // 既存の中身を完全クリア
+      const mount = document.createElement('div');
+      host.appendChild(mount);                // 新しい描画先を用意
+
+      const grid = new gridjs.Grid({
         columns,
         data: rows,
         search: { enabled: true, placeholder: '検索...' },
@@ -83,21 +75,16 @@
         pagination: { enabled: true, limit: 20 },
         language: {
           search: { placeholder: '検索...' },
-          pagination: {
-            previous: '前',
-            next: '次',
-            showing: '表示中',
-            results: '件'
-          }
+          pagination: { previous: '前', next: '次', showing: '表示中', results: '件' }
         }
       });
-      gridInstance.render(document.getElementById('table'));
+
+      // 描画は次フレームで実行（連続クリック時の衝突をさらに避ける）
+      requestAnimationFrame(() => grid.render(mount));
     };
 
     const normalizeToGrid = (objArray) => {
-      if (!Array.isArray(objArray) || objArray.length === 0) {
-        return { columns: [], rows: [] };
-      }
+      if (!Array.isArray(objArray) || objArray.length === 0) return { columns: [], rows: [] };
       const columns = Array.from(
         objArray.reduce((set, row) => {
           Object.keys(row || {}).forEach(k => set.add(k));
@@ -123,56 +110,50 @@
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(`JSON取得に失敗しました (${res.status})`);
       const data = await res.json();
-      // JSONは配列のオブジェクトを想定（例：[{ID: "...", questions: "..."}]）
       const arr = Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data : []);
       if (!Array.isArray(arr) || !arr.length) throw new Error('JSONの配列データが見つかりません');
       const { columns, rows } = normalizeToGrid(arr);
       renderGrid(columns, rows);
     };
 
+    let loadingPromise = null; // 多重実行を避ける
     const loadBySrc = async (src) => {
+      if (!src) { showError('データURLを入力してください'); return; }
       showError('');
       setLoading(true);
       try {
-        if (isJson(src)) {
-          await loadJson(src);
-        } else {
-          await loadCsv(src);
-        }
+        // 直前の読み込みが残っていたら待つ
+        if (loadingPromise) await loadingPromise;
+        loadingPromise = (isJson(src) ? loadJson(src) : loadCsv(src));
+        await loadingPromise;
       } catch (e) {
         showError(e.message || String(e));
-        $('#table').textContent = '読み込みに失敗しました。';
+        document.getElementById('table').textContent = '読み込みに失敗しました。';
         console.error(e);
       } finally {
         setLoading(false);
+        loadingPromise = null;
       }
     };
 
     // ===== イベント =====
     document.getElementById('loadBtn').addEventListener('click', () => {
       const raw = document.getElementById('sheetUrl').value.trim();
-      if (!raw) { showError('データURLを入力してください'); return; }
       loadBySrc(raw);
       updateHash(raw);
     });
-
-    // Enterキーで読み込み
     document.getElementById('sheetUrl').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        $('#loadBtn').click();
-      }
+      if (e.key === 'Enter') { e.preventDefault(); document.getElementById('loadBtn').click(); }
     });
 
     // ===== 初期化：#src= または DEFAULT_SRC を自動読込 =====
     (async () => {
       const fromHash = parseQueryHash();
-      const initial = fromHash || DEFAULT_SRC; // 例: 'data.csv'
-      $('#sheetUrl').value = initial;
+      const initial = fromHash || DEFAULT_SRC;
+      document.getElementById('sheetUrl').value = initial;
       await loadBySrc(initial);
       updateHash(initial);
     })();
   </script>
 </body>
 </html>
-
