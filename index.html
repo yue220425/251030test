@@ -64,30 +64,14 @@
     .pill.bigcat{
       font-size:15px; font-weight:700; padding:10px 14px;
     }
-    .pill.bigcat[data-code="A"]{
-      background:var(--catA-bg); border-color:var(--catA); color:var(--catA-tx);
-    }
-    .pill.bigcat[data-code="A"][data-on="1"]{
-      background:var(--catA); border-color:var(--catA); color:#fff;
-    }
-    .pill.bigcat[data-code="B"]{
-      background:var(--catB-bg); border-color:var(--catB); color:var(--catB-tx);
-    }
-    .pill.bigcat[data-code="B"][data-on="1"]{
-      background:var(--catB); border-color:var(--catB); color:#fff;
-    }
-    .pill.bigcat[data-code="C"]{
-      background:var(--catC-bg); border-color:var(--catC); color:var(--catC-tx);
-    }
-    .pill.bigcat[data-code="C"][data-on="1"]{
-      background:var(--catC); border-color:var(--catC); color:#fff;
-    }
-    .pill.bigcat[data-code="D"]{
-      background:var(--catD-bg); border-color:var(--catD); color:var(--catD-tx);
-    }
-    .pill.bigcat[data-code="D"][data-on="1"]{
-      background:var(--catD); border-color:var(--catD); color:#fff;
-    }
+    .pill.bigcat[data-code="A"]{ background:var(--catA-bg); border-color:var(--catA); color:var(--catA-tx); }
+    .pill.bigcat[data-code="A"][data-on="1"]{ background:var(--catA); border-color:var(--catA); color:#fff; }
+    .pill.bigcat[data-code="B"]{ background:var(--catB-bg); border-color:var(--catB); color:var(--catB-tx); }
+    .pill.bigcat[data-code="B"][data-on="1"]{ background:var(--catB); border-color:var(--catB); color:#fff; }
+    .pill.bigcat[data-code="C"]{ background:var(--catC-bg); border-color:var(--catC); color:var(--catC-tx); }
+    .pill.bigcat[data-code="C"][data-on="1"]{ background:var(--catC); border-color:var(--catC); color:#fff; }
+    .pill.bigcat[data-code="D"]{ background:var(--catD-bg); border-color:var(--catD); color:var(--catD-tx); }
+    .pill.bigcat[data-code="D"][data-on="1"]{ background:var(--catD); border-color:var(--catD); color:#fff; }
 
     /* === カード表示 === */
     .cards{ margin-top:16px; display:grid; gap:12px; }
@@ -122,6 +106,17 @@
     .kv .k{ font-size:12px; color:var(--muted); margin-bottom:6px; font-weight:600; }
     .tags{ display:flex; flex-wrap:wrap; gap:6px; }
     .tag{ padding:3px 8px; border-radius:999px; background:var(--tag-bg); border:1px solid #dbe4ff; font-size:12px; }
+
+    /* ★ カード内「大分類」用の色付きバッジ（上のピルと同配色） */
+    .badge{
+      display:inline-flex; align-items:center; gap:6px;
+      padding:4px 10px; border-radius:999px; border:1px solid transparent;
+      font-weight:700; font-size:13px; line-height:1.2;
+    }
+    .badge.bigcat[data-code="A"]{ background:var(--catA-bg); border-color:var(--catA); color:var(--catA-tx); }
+    .badge.bigcat[data-code="B"]{ background:var(--catB-bg); border-color:var(--catB); color:var(--catB-tx); }
+    .badge.bigcat[data-code="C"]{ background:var(--catC-bg); border-color:var(--catC); color:var(--catC-tx); }
+    .badge.bigcat[data-code="D"]{ background:var(--catD-bg); border-color:var(--catD); color:var(--catD-tx); }
 
     /* ページネーション */
     .pager{
@@ -288,6 +283,12 @@
       return index;
     };
 
+    // 大分類名 → コード（A/B/C/D）を引く
+    const bigCodeByName = (name) => {
+      const found = CATEGORY_MAP.find(c => c.name === name);
+      return found ? found.code : '';
+    };
+
     // ===== カード描画 =====
     const renderCards = (rows) => {
       const host = $('#cards');
@@ -326,18 +327,11 @@
         qa.appendChild(aBox);
         card.appendChild(qa);
 
-        // 下段：メタ
+        // 下段：メタ（2カラム→狭い画面は1カラム）
         const meta = document.createElement('div');
         meta.className = 'meta';
 
-        [
-          { key:'大分類', label:'大分類' },
-          { key:'中分類', label:'中分類' },
-          { key:'属性', label:'属性', token:true },
-          { key:'対象・関係性', label:'対象・関係性', token:true },
-          { key:'情報カテゴリ', label:'情報カテゴリ', token:true },
-          { key:'就活時間軸', label:'就活時間軸', token:false },
-        ].forEach(def => {
+        META_DEF.forEach(def => {
           const valRaw = row[def.key];
           const has = valRaw != null && String(valRaw).trim() !== '';
           if (!has) return;
@@ -352,7 +346,15 @@
 
           const vWrap = document.createElement('div');
 
-          if (def.token) {
+          if (def.key === '大分類') {
+            // 大分類だけは色付きバッジ（A/B/C/D対応）
+            const code = bigCodeByName(String(valRaw));
+            const badge = document.createElement('span');
+            badge.className = 'badge bigcat';
+            if (code) badge.dataset.code = code;
+            badge.textContent = (code ? `${code} ` : '') + String(valRaw);
+            vWrap.appendChild(badge);
+          } else if (def.token) {
             const tokens = toTokens(valRaw);
             const tags = document.createElement('div');
             tags.className = 'tags';
