@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CSV / JSON ビューワー（タグ絞り込み＋ワイド列）</title>
+  <title>CSV / JSON ビューワー（階層タグ絞り込み＋ワイド列）</title>
 
   <!-- 外部ライブラリ -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
@@ -29,9 +29,11 @@
 
     /* Facet area */
     .facet-wrap{ margin-top:18px; }
-    .facet-top{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:14px 0 6px; }
     .facet-title{ font-weight:700; margin:20px 0 8px; }
     .facet-row{ display:flex; flex-wrap:wrap; gap:8px; }
+    .facet-group{ margin-bottom:12px; }
+    .facet-group .facet-row{ margin-left:8px; }
+    .facet-group-label{ font-weight:600; margin:8px 0 4px; opacity:.85; }
     .pill{
       display:inline-flex; align-items:center; gap:8px;
       padding:8px 12px; border:1px solid var(--pill-bd); background:var(--pill-bg);
@@ -43,22 +45,17 @@
     .facet-actions{ margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; }
     .btn-ghost{ padding:6px 10px; border:1px solid #d1d5db; background:#fff; color:#111; border-radius:8px; cursor:pointer; }
     .btn-ghost:hover{ background:#f9fafb; }
-    .facet-grid{ display:grid; gap:14px; margin-top:10px; }
-    @media (min-width:900px){ .facet-grid{ grid-template-columns: 1fr 1fr; } }
-
     .divider{ height:1px; background:#e5e7eb; margin:18px 0; }
 
     /* ==== Grid.js 表示最適化 ==== */
-    /* セル内のテキストを折り返す（デフォはnowrap気味） */
     .gridjs-td, .gridjs-th { white-space: normal; }
     .gridjs-td { word-break: break-word; }
-    /* テーブルが横に広くなる場合のスクロール */
     .gridjs-container { overflow: auto; }
   </style>
 </head>
 
 <body>
-  <h1>CSV / JSON ビューワー（タグ絞り込み＋ワイド列）</h1>
+  <h1>CSV / JSON ビューワー（階層タグ絞り込み＋ワイド列）</h1>
 
   <div class="toolbar">
     <input id="sheetUrl" class="input" type="text"
@@ -68,23 +65,42 @@
   <div class="hint">同一オリジン推奨（GitHub Pagesなら <code>index.html</code> と同階層に置く）</div>
   <div id="status" class="error"></div>
 
-  <!-- === Facet filters === -->
+  <!-- === 階層ファセット === -->
   <div id="facetTop" class="facet-wrap">
     <div class="facet-title">大分類</div>
-    <div id="facetTopRow" class="facet-top"></div>
+    <div id="facetTopRow" class="facet-row"></div>
     <div class="facet-actions">
       <button id="clearTop" class="btn-ghost">大分類のみ 選択解除</button>
     </div>
   </div>
 
+  <div class="facet-wrap">
+    <div class="facet-title">中分類（大分類に応じて表示）</div>
+    <div id="facetMid" class="facet-group"></div>
+    <div class="facet-actions">
+      <button id="clearMid" class="btn-ghost">中分類のみ 選択解除</button>
+    </div>
+  </div>
+
   <div class="divider"></div>
 
+  <!-- その他ファセット -->
   <div id="facetOther" class="facet-wrap">
-    <div class="facet-grid" id="facetGrid">
-      <!-- ここに 中分類 / 属性 / 対象・関係性 / 情報カテゴリ のピルが入る -->
+    <div class="facet-title">その他の絞り込み</div>
+    <div class="facet-group">
+      <div class="facet-group-label">属性</div>
+      <div id="facetAttr" class="facet-row"></div>
+    </div>
+    <div class="facet-group">
+      <div class="facet-group-label">対象・関係性</div>
+      <div id="facetTarget" class="facet-row"></div>
+    </div>
+    <div class="facet-group">
+      <div class="facet-group-label">情報カテゴリ</div>
+      <div id="facetInfoCat" class="facet-row"></div>
     </div>
     <div class="facet-actions">
-      <button id="clearOthers" class="btn-ghost">中分類/属性/対象・関係性/情報カテゴリ 選択解除</button>
+      <button id="clearOthers" class="btn-ghost">属性/対象・関係性/情報カテゴリ 選択解除</button>
       <button id="clearAll" class="btn-ghost">全解除</button>
     </div>
   </div>
@@ -94,14 +110,55 @@
   <script>
     // ===== 設定 =====
     const DEFAULT_SRC = 'qa_questions_clean.json'; // ←必要に応じて data.csv 等へ
-    // ファセットに使う列名（列が見つからなければスキップ）
-    const FACETS = [
-      { key: '大分類', title: '大分類', top: true },
-      { key: '中分類', title: '中分類' },
-      { key: '属性', title: '属性' },
-      { key: '対象・関係性', title: '対象・関係性' },
-      { key: '情報カテゴリ', title: '情報カテゴリ' },
+
+    // 大分類↔中分類の対応（コード表示用）。データ列の値は日本語名でフィルタします。
+    const CATEGORY_MAP = [
+      {
+        code: 'A', name: '個別支援・介入',
+        mids: [
+          { code:'A-1', name:'グレーゾーン対応' },
+          { code:'A-2', name:'自己理解促進' },
+          { code:'A-3', name:'配慮・申請' },
+          { code:'A-4', name:'面談・コミュニケーション' },
+          { code:'A-5', name:'家族との連携' },
+        ]
+      },
+      {
+        code: 'B', name: '進路・企業・雇用',
+        mids: [
+          { code:'B-1', name:'雇用形態の選択' },
+          { code:'B-2', name:'障害者雇用制度' },
+          { code:'B-3', name:'キャリア計画' },
+          { code:'B-4', name:'企業・採用情報' },
+        ]
+      },
+      {
+        code: 'C', name: '支援体制・学内外連携',
+        mids: [
+          { code:'C-1', name:'学内連携・体制' },
+          { code:'C-2', name:'学外連携・リファー' },
+          { code:'C-3', name:'企業との連携' },
+          { code:'C-4', name:'アウトリーチ' },
+        ]
+      },
+      {
+        code: 'D', name: '事例・情報収集',
+        mids: [
+          { code:'D-1', name:'障害別事例' },
+          { code:'D-2', name:'難病・その他事例' },
+          { code:'D-3', name:'就労経験談' },
+          { code:'D-4', name:'学内・外取り組み' },
+        ]
+      }
     ];
+
+    // その他ファセットに使う列名
+    const FACET_OTHERS = [
+      { key: '属性', title: '属性', elId: 'facetAttr' },
+      { key: '対象・関係性', title: '対象・関係性', elId: 'facetTarget' },
+      { key: '情報カテゴリ', title: '情報カテゴリ', elId: 'facetInfoCat' },
+    ];
+
     // 値の分割に使うセパレータ
     const TOKEN_SPLIT = /[,/|｜・;；、\s]+/g;
 
@@ -123,53 +180,6 @@
     };
     const updateHash = (src) => { history.replaceState(null, '', '#src=' + encodeURIComponent(src)); };
 
-    // ===== データ保持 =====
-    let originalRows = [];   // 行はオブジェクト（キー=列名）
-    let allColumns = [];     // テーブルの列順（キーの配列）
-    let facetIndex = {};     // { facetKey: Map(value -> Set(rowIndex)) }
-    let facetSelections = {}; // { facetKey: Set(selectedValues) }
-
-    // ==== 列メタ生成（Grid.js用）====
-    const buildGridColumns = (columnKeys) => {
-      // 指定列を太め（px指定）に、それ以外は自動
-      const isWideQ = (k) => WIDE_QUESTION_KEYS.includes(k);
-      const isWideA = (k) => WIDE_ANSWER_KEYS.includes(k);
-      return columnKeys.map(k => {
-        if (isWideQ(k) || isWideA(k)) {
-          return { id: k, name: k, width: '520px' }; // ★ワイド化
-        }
-        return { id: k, name: k }; // デフォルト
-      });
-    };
-
-    // ===== 表示（Grid.jsは毎回新しいmountに描画） =====
-    const renderGrid = (columnKeys, rowsObjs) => {
-      // Grid.jsに渡す列メタ
-      const gridColumns = buildGridColumns(columnKeys);
-
-      // dataは配列の配列で渡す（列順はcolumnKeysに合わせる）
-      const data = rowsObjs.map(r => columnKeys.map(c => r[c] ?? ''));
-
-      const host = document.getElementById('table');
-      host.innerHTML = '';
-      const mount = document.createElement('div');
-      host.appendChild(mount);
-
-      const grid = new gridjs.Grid({
-        columns: gridColumns,
-        data,
-        search: { enabled: true, placeholder: '検索...' },
-        sort: true,
-        pagination: { enabled: true, limit: 20 },
-        language: {
-          search: { placeholder: '検索...' },
-          pagination: { previous: '前', next: '次', showing: '表示中', results: '件' }
-        }
-      });
-      requestAnimationFrame(() => grid.render(mount));
-    };
-
-    // ===== 文字列をトークン配列へ（空要素除去・重複排除） =====
     const toTokens = (v) => {
       if (v == null) return [];
       if (Array.isArray(v)) return [...new Set(v.flatMap(toTokens))];
@@ -178,92 +188,66 @@
       return [...new Set(s.split(TOKEN_SPLIT).map(x => x.trim()).filter(Boolean))];
     };
 
-    // ===== ファセットの作成 =====
-    const buildFacetIndex = (rows, facetDefs) => {
+    // ===== データ保持 =====
+    let originalRows = [];     // 行はオブジェクト（キー=列名）
+    let allColumns = [];       // テーブル表示列
+    let facetIndex = {};       // { 列名: Map(value -> Set(rowIndex)) }
+    let facetSelections = {    // 選択状態
+      '大分類': new Set(),
+      '中分類': new Set(),
+      '属性': new Set(),
+      '対象・関係性': new Set(),
+      '情報カテゴリ': new Set(),
+    };
+
+    // ===== Grid列メタ（質問・回答をワイド化） =====
+    const buildGridColumns = (columnKeys) => {
+      const isWideQ = (k) => WIDE_QUESTION_KEYS.includes(k);
+      const isWideA = (k) => WIDE_ANSWER_KEYS.includes(k);
+      return columnKeys.map(k => {
+        if (isWideQ(k) || isWideA(k)) return { id: k, name: k, width: '520px' };
+        return { id: k, name: k };
+      });
+    };
+
+    // ===== Grid描画（毎回新規mount） =====
+    const renderGrid = (columnKeys, rowsObjs) => {
+      const gridColumns = buildGridColumns(columnKeys);
+      const data = rowsObjs.map(r => columnKeys.map(c => r[c] ?? ''));
+      const host = document.getElementById('table');
+      host.innerHTML = '';
+      const mount = document.createElement('div');
+      host.appendChild(mount);
+      const grid = new gridjs.Grid({
+        columns: gridColumns,
+        data,
+        search: { enabled: true, placeholder: '検索...' },
+        sort: true,
+        pagination: { enabled: true, limit: 20 },
+        language: { search: { placeholder: '検索...' },
+          pagination: { previous: '前', next: '次', showing: '表示中', results: '件' } }
+      });
+      requestAnimationFrame(() => grid.render(mount));
+    };
+
+    // ===== インデックス作成 =====
+    const buildFacetIndex = (rows, keys) => {
       const index = {};
-      facetDefs.forEach(f => index[f.key] = new Map());
+      keys.forEach(k => index[k] = new Map());
       rows.forEach((row, i) => {
-        facetDefs.forEach(f => {
-          const vals = toTokens(row[f.key]);
+        keys.forEach(k => {
+          const vals = toTokens(row[k]);
           if (!vals.length) return;
           vals.forEach(val => {
-            if (!index[f.key].has(val)) index[f.key].set(val, new Set());
-            index[f.key].get(val).add(i);
+            if (!index[k].has(val)) index[k].set(val, new Set());
+            index[k].get(val).add(i);
           });
         });
       });
       return index;
     };
 
-    // ===== ファセットUIの描画 =====
-    const renderFacetUI = () => {
-      FACETS.forEach(f => { facetSelections[f.key] = facetSelections[f.key] || new Set(); });
-
-      // 大分類（トップ）
-      const topDef = FACETS.find(f => f.top);
-      const topRow = $('#facetTopRow');
-      topRow.innerHTML = '';
-      if (topDef && facetIndex[topDef.key]) {
-        const entries = [...facetIndex[topDef.key].entries()].sort((a,b)=> b[1].size - a[1].size);
-        // const showEntries = entries.slice(0,4); // 4固定にしたい場合はこちらを使用
-        const showEntries = entries;
-        showEntries.forEach(([val, set]) => {
-          const pill = document.createElement('button');
-          pill.className = 'pill';
-          pill.dataset.facet = topDef.key;
-          pill.dataset.value = val;
-          pill.innerHTML = `<span>${val}</span><span class="count">${set.size}</span>`;
-          pill.addEventListener('click', onPillToggle);
-          topRow.appendChild(pill);
-        });
-      }
-
-      // その他のファセット
-      const grid = $('#facetGrid');
-      grid.innerHTML = '';
-      FACETS.filter(f => !f.top).forEach(f => {
-        if (!facetIndex[f.key] || facetIndex[f.key].size === 0) return;
-        const section = document.createElement('div');
-        const title = document.createElement('div');
-        title.className = 'facet-title';
-        title.textContent = f.title;
-        const row = document.createElement('div');
-        row.className = 'facet-row';
-        const entries = [...facetIndex[f.key].entries()].sort((a,b)=> b[1].size - a[1].size);
-        entries.forEach(([val, set]) => {
-          const pill = document.createElement('button');
-          pill.className = 'pill';
-          pill.dataset.facet = f.key;
-          pill.dataset.value = val;
-          pill.innerHTML = `<span>${val}</span><span class="count">${set.size}</span>`;
-          pill.addEventListener('click', onPillToggle);
-          row.appendChild(pill);
-        });
-        section.appendChild(title);
-        section.appendChild(row);
-        grid.appendChild(section);
-      });
-
-      // クリアボタン
-      $('#clearTop').onclick = () => { clearFacetSelections([topDef?.key].filter(Boolean)); };
-      $('#clearOthers').onclick = () => { clearFacetSelections(FACETS.filter(f=>!f.top).map(f=>f.key)); };
-      $('#clearAll').onclick = () => { clearFacetSelections(FACETS.map(f=>f.key)); };
-
-      // 初回の見た目反映
-      syncPillUI();
-    };
-
-    // ===== ピルのON/OFFクリック =====
-    const onPillToggle = (e) => {
-      const facet = e.currentTarget.dataset.facet;
-      const val = e.currentTarget.dataset.value;
-      const set = facetSelections[facet] || (facetSelections[facet] = new Set());
-      if (set.has(val)) set.delete(val); else set.add(val);
-      syncPillUI();
-      applyFacetFilter();
-    };
-
-    // ===== ピルのON/OFF見た目更新 =====
+    // ===== ピルON/OFF UI反映 =====
     const syncPillUI = () => {
       document.querySelectorAll('.pill').forEach(el => {
         const facet = el.dataset.facet, val = el.dataset.value;
@@ -272,22 +256,16 @@
       });
     };
 
-    // ===== クリア =====
-    const clearFacetSelections = (facetKeys) => {
-      facetKeys.forEach(k => facetSelections[k]?.clear());
-      syncPillUI();
-      applyFacetFilter();
-    };
-
     // ===== フィルタ適用 =====
     const applyFacetFilter = () => {
-      let candidate = null; // Set(index)
-      FACETS.forEach(f => {
-        const sel = facetSelections[f.key];
+      // 各ファセットは OR、ファセット間は AND
+      let candidate = null;
+      Object.keys(facetSelections).forEach(facet => {
+        const sel = facetSelections[facet];
         if (!sel || sel.size === 0) return;
         const orSet = new Set();
         sel.forEach(v => {
-          const s = facetIndex[f.key]?.get(v);
+          const s = facetIndex[facet]?.get(v);
           if (s) s.forEach(i => orSet.add(i));
         });
         candidate = (candidate == null) ? orSet : new Set([...candidate].filter(i => orSet.has(i)));
@@ -300,7 +278,115 @@
       renderGrid(allColumns, filteredRows);
     };
 
-    // ===== ローダー =====
+    // ===== クリア =====
+    const clearSelections = (keys) => {
+      keys.forEach(k => facetSelections[k]?.clear());
+      syncPillUI();
+      renderMidFacet(); // 中分類表示が大分類に依存するため再描画
+      applyFacetFilter();
+    };
+
+    // ===== 大分類（上部）描画 =====
+    const renderTopFacet = () => {
+      const wrap = $('#facetTopRow');
+      wrap.innerHTML = '';
+      const idx = facetIndex['大分類'] || new Map();
+
+      CATEGORY_MAP.forEach(cat => {
+        const valName = cat.name; // データ列での値
+        const count = idx.get(valName)?.size || 0;
+        const pill = document.createElement('button');
+        pill.className = 'pill';
+        pill.dataset.facet = '大分類';
+        pill.dataset.value = valName;
+        pill.innerHTML = `<span>${cat.code} ${valName}</span><span class="count">${count}</span>`;
+        pill.addEventListener('click', () => {
+          const set = facetSelections['大分類'];
+          set.has(valName) ? set.delete(valName) : set.add(valName);
+          syncPillUI();
+          renderMidFacet(); // 大分類変更→中分類の見せ方更新
+          applyFacetFilter();
+        });
+        wrap.appendChild(pill);
+      });
+    };
+
+    // ===== 中分類（階層表示）描画 =====
+    const renderMidFacet = () => {
+      const host = $('#facetMid');
+      host.innerHTML = '';
+
+      const selectedBigs = [...facetSelections['大分類']];
+      const midIdx = facetIndex['中分類'] || new Map();
+
+      // 表示する大分類グループを決定（未選択なら全部、選択があればその範囲のみ）
+      const groups = (selectedBigs.length > 0)
+        ? CATEGORY_MAP.filter(cat => selectedBigs.includes(cat.name))
+        : CATEGORY_MAP;
+
+      groups.forEach(cat => {
+        const g = document.createElement('div');
+        g.className = 'facet-group';
+
+        const label = document.createElement('div');
+        label.className = 'facet-group-label';
+        label.textContent = `${cat.code} ${cat.name}`;
+        g.appendChild(label);
+
+        const row = document.createElement('div');
+        row.className = 'facet-row';
+
+        cat.mids.forEach(m => {
+          const valName = m.name; // データ列の値
+          const count = midIdx.get(valName)?.size || 0;
+          const pill = document.createElement('button');
+          pill.className = 'pill';
+          pill.dataset.facet = '中分類';
+          pill.dataset.value = valName;
+          pill.innerHTML = `<span>${m.code} ${valName}</span><span class="count">${count}</span>`;
+          pill.addEventListener('click', () => {
+            const set = facetSelections['中分類'];
+            set.has(valName) ? set.delete(valName) : set.add(valName);
+            syncPillUI();
+            applyFacetFilter();
+          });
+          row.appendChild(pill);
+        });
+
+        g.appendChild(row);
+        host.appendChild(g);
+      });
+
+      // 見た目のON/OFF更新
+      syncPillUI();
+    };
+
+    // ===== その他（属性/対象・関係性/情報カテゴリ）描画 =====
+    const renderOtherFacets = () => {
+      FACET_OTHERS.forEach(def => {
+        const el = document.getElementById(def.elId);
+        el.innerHTML = '';
+        const idx = facetIndex[def.key] || new Map();
+        const entries = [...idx.entries()].sort((a,b)=> b[1].size - a[1].size);
+        entries.forEach(([val, set]) => {
+          const pill = document.createElement('button');
+          pill.className = 'pill';
+          pill.dataset.facet = def.key;
+          pill.dataset.value = val;
+          pill.innerHTML = `<span>${val}</span><span class="count">${set.size}</span>`;
+          pill.addEventListener('click', () => {
+            const s = facetSelections[def.key];
+            s.has(val) ? s.delete(val) : s.add(val);
+            syncPillUI();
+            applyFacetFilter();
+          });
+          el.appendChild(pill);
+        });
+      });
+      syncPillUI();
+    };
+
+    // ===== データロード周り =====
     const normalizeToArrayOfObjects = (data) => {
       let arr = [];
       if (Array.isArray(data)) arr = data;
@@ -308,12 +394,11 @@
       else if (Array.isArray(data?.rows) && Array.isArray(data?.header)) {
         arr = data.rows.map(r => Object.fromEntries(data.header.map((h,idx)=>[h, r[idx]])));
       }
-      arr = arr.map(o => {
+      return arr.map(o => {
         const out = {};
         Object.keys(o||{}).forEach(k => out[k] = (o[k]==null ? '' : String(o[k])));
         return out;
       });
-      return arr;
     };
 
     const detectColumns = (arr) => {
@@ -350,12 +435,23 @@
         originalRows = arr;
         allColumns = detectColumns(arr);
 
-        // ファセットのためのインデックスを作成
-        facetIndex = buildFacetIndex(arr, FACETS);
-        renderFacetUI();
+        // 検索に使う列のインデックス化
+        const facetKeys = ['大分類','中分類','属性','対象・関係性','情報カテゴリ'];
+        facetIndex = buildFacetIndex(arr, facetKeys);
 
-        // 初期描画（絞り込みなし）
+        // ファセット描画
+        renderTopFacet();
+        renderMidFacet();
+        renderOtherFacets();
+
+        // 初回表
         renderGrid(allColumns, originalRows);
+
+        // クリアボタン
+        $('#clearTop').onclick  = () => clearSelections(['大分類']);
+        $('#clearMid').onclick  = () => clearSelections(['中分類']);
+        $('#clearOthers').onclick = () => clearSelections(['属性','対象・関係性','情報カテゴリ']);
+        $('#clearAll').onclick  = () => clearSelections(['大分類','中分類','属性','対象・関係性','情報カテゴリ']);
 
       } catch (e) {
         showError(e.message || String(e));
@@ -375,7 +471,7 @@
       if (e.key === 'Enter') { e.preventDefault(); document.getElementById('loadBtn').click(); }
     });
 
-    // ===== 初期化：#src= または DEFAULT_SRC 自動読込 =====
+    // ===== 初期化 =====
     (async () => {
       const fromHash = parseQueryHash();
       const initial = fromHash || DEFAULT_SRC;
