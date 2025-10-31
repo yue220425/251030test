@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CSV / JSON ビューワー（カード表示・階層タグ対応・Q/A強調）</title>
+  <title>CSV / JSON ビューワー（カード表示・階層タグ対応・Q/A強調・大分類色分け）</title>
 
   <!-- CSVパース用のみ -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
@@ -14,10 +14,16 @@
       --pill-on-bg:#111827; --pill-on-bd:#111827; --pill-on-tx:#fff;
       --pill-hover:#e5e7eb;
       --card-bd:#e5e7eb; --card-bg:#fff; --muted:#6b7280; --tag-bg:#eef2ff;
-      /* Qは「薄いグリーンと青の間」→青緑（やや濃いめで可読性UP） */
-      --q-color:#0ea5a8;  /* teal-500 近似 */
-      /* Aは赤系（やや濃いめで可読性UP） */
-      --a-color:#dc2626;  /* red-600 近似 */
+
+      /* Q/A 色 */
+      --q-color:#0ea5a8;  /* teal-500 */
+      --a-color:#dc2626;  /* red-600 */
+
+      /* 大分類カラー（A=青緑, B=青, C=橙, D=紫） */
+      --catA:#14b8a6; --catA-bg:#e6fffb; --catA-tx:#0f766e;
+      --catB:#2563eb; --catB-bg:#e8f0ff; --catB-tx:#1e3a8a;
+      --catC:#d97706; --catC-bg:#fff3e6; --catC-tx:#92400e;
+      --catD:#7c3aed; --catD-bg:#f3e8ff; --catD-tx:#5b21b6;
     }
     body{
       max-width: 1100px; margin: 24px auto; padding: 0 12px;
@@ -41,16 +47,47 @@
     .facet-group{ margin-bottom:12px; }
     .facet-group .facet-row{ margin-left:8px; }
     .facet-group-label{ font-weight:600; margin:8px 0 4px; opacity:.85; }
+
     .pill{
       display:inline-flex; align-items:center; gap:8px;
       padding:8px 12px; border:1px solid var(--pill-bd); background:var(--pill-bg);
       color:var(--pill-tx); border-radius:999px; cursor:pointer; user-select:none; font-size:14px;
+      transition: background .12s, color .12s, border-color .12s;
     }
     .pill:hover{ background:var(--pill-hover); }
     .pill[data-on="1"]{ background:var(--pill-on-bg); border-color:var(--pill-on-bd); color:var(--pill-on-tx); }
     .pill .count{ font-size:12px; opacity:.65; }
     .facet-actions{ margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; }
     .divider{ height:1px; background:#e5e7eb; margin:18px 0; }
+
+    /* ★ 大分類ピル：色分け＋少し大きめ */
+    .pill.bigcat{
+      font-size:15px; font-weight:700; padding:10px 14px;
+    }
+    .pill.bigcat[data-code="A"]{
+      background:var(--catA-bg); border-color:var(--catA); color:var(--catA-tx);
+    }
+    .pill.bigcat[data-code="A"][data-on="1"]{
+      background:var(--catA); border-color:var(--catA); color:#fff;
+    }
+    .pill.bigcat[data-code="B"]{
+      background:var(--catB-bg); border-color:var(--catB); color:var(--catB-tx);
+    }
+    .pill.bigcat[data-code="B"][data-on="1"]{
+      background:var(--catB); border-color:var(--catB); color:#fff;
+    }
+    .pill.bigcat[data-code="C"]{
+      background:var(--catC-bg); border-color:var(--catC); color:var(--catC-tx);
+    }
+    .pill.bigcat[data-code="C"][data-on="1"]{
+      background:var(--catC); border-color:var(--catC); color:#fff;
+    }
+    .pill.bigcat[data-code="D"]{
+      background:var(--catD-bg); border-color:var(--catD); color:var(--catD-tx);
+    }
+    .pill.bigcat[data-code="D"][data-on="1"]{
+      background:var(--catD); border-color:var(--catD); color:#fff;
+    }
 
     /* === カード表示 === */
     .cards{ margin-top:16px; display:grid; gap:12px; }
@@ -67,16 +104,11 @@
     }
     .q.qa-block{ border-left:4px solid var(--q-color); }
     .a.qa-block{ border-left:4px solid var(--a-color); }
-
-    /* 先頭のQ. / A. を大きく＆色分け */
     .mark{
-      font-weight:800; font-size:22px; line-height:1; margin-top:2px; flex:0 0 auto;
-      letter-spacing:.5px;
+      font-weight:800; font-size:22px; line-height:1; margin-top:2px; flex:0 0 auto; letter-spacing:.5px;
     }
     .mark.q{ color:var(--q-color); }
     .mark.a{ color:var(--a-color); }
-
-    .qa .label{ font-size:12px; color:var(--muted); margin-bottom:4px; font-weight:600; }
     .qa .text{ white-space:pre-wrap; word-break:break-word; line-height:1.7; font-size:15px; }
 
     .meta{
@@ -101,7 +133,7 @@
 </head>
 
 <body>
-  <h1>CSV / JSON ビューワー（カード表示・階層タグ対応・Q/A強調）</h1>
+  <h1>CSV / JSON ビューワー（カード表示・階層タグ対応・Q/A強調・大分類色分け）</h1>
 
   <div class="toolbar">
     <input id="sheetUrl" class="input" type="text" placeholder="例）qa_questions_clean.json / data.csv（同階層） / 公開URL" />
@@ -272,7 +304,7 @@
         const card = document.createElement('div');
         card.className = 'card';
 
-        // 上段：質問・回答（Q./A. を先頭に大きめ表示）
+        // 上段：質問・回答
         const qa = document.createElement('div');
         qa.className = 'qa';
 
@@ -294,11 +326,18 @@
         qa.appendChild(aBox);
         card.appendChild(qa);
 
-        // 下段：メタ（2カラム→狭い画面は1カラム）
+        // 下段：メタ
         const meta = document.createElement('div');
         meta.className = 'meta';
 
-        META_DEF.forEach(def => {
+        [
+          { key:'大分類', label:'大分類' },
+          { key:'中分類', label:'中分類' },
+          { key:'属性', label:'属性', token:true },
+          { key:'対象・関係性', label:'対象・関係性', token:true },
+          { key:'情報カテゴリ', label:'情報カテゴリ', token:true },
+          { key:'就活時間軸', label:'就活時間軸', token:false },
+        ].forEach(def => {
           const valRaw = row[def.key];
           const has = valRaw != null && String(valRaw).trim() !== '';
           if (!has) return;
@@ -351,10 +390,10 @@
       }
     };
 
-    // エスケープ（最低限）
+    // HTMLエスケープ
     const escapeHtml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
-    // ===== UI（ピル） =====
+    // ===== ピルUI =====
     const syncPillUI = () => {
       document.querySelectorAll('.pill').forEach(el => {
         const facet = el.dataset.facet, val = el.dataset.value;
@@ -369,9 +408,10 @@
         const valName = cat.name;
         const count = idx.get(valName)?.size || 0;
         const pill = document.createElement('button');
-        pill.className = 'pill';
+        pill.className = 'pill bigcat';
         pill.dataset.facet = '大分類';
         pill.dataset.value = valName;
+        pill.dataset.code = cat.code;   // ← 色分け用
         pill.innerHTML = `<span>${cat.code} ${valName}</span><span class="count">${count}</span>`;
         pill.addEventListener('click', () => {
           toggleSelection('大分類', valName);
