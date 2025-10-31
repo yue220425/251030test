@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CSV / JSON ビューワー（階層タグ絞り込み＋ワイド列）</title>
+  <title>CSV / JSON ビューワー（階層タグ＋ワイド列＋タグは非スクロール）</title>
 
   <!-- 外部ライブラリ -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
@@ -16,8 +16,14 @@
       --pill-on-bg:#111827; --pill-on-bd:#111827; --pill-on-tx:#fff;
       --pill-hover:#e5e7eb;
     }
-    body { max-width: 1100px; margin: 24px auto; padding: 0 12px;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;}
+    body {
+      max-width: 1100px;
+      margin: 24px auto;
+      padding: 0 12px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+      /* ページ全体の横スクロールを抑止（テーブルは下の.containerでスクロール） */
+      overflow-x: hidden;
+    }
     h1 { margin: 0 0 12px; }
     .toolbar { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
     .input { width: 100%; padding: 10px 12px; border: 1px solid #d0d7de; border-radius: 8px; }
@@ -25,9 +31,8 @@
     .btn:disabled { opacity: .6; cursor: not-allowed; }
     .hint { color: #666; font-size: 12px; margin-top: 6px; }
     .error { color: #b00020; margin: 8px 0 0; }
-    #table { margin-top: 16px; }
 
-    /* Facet area */
+    /* Facet area（タグは常に折り返し、横スクロール不要） */
     .facet-wrap{ margin-top:18px; }
     .facet-title{ font-weight:700; margin:20px 0 8px; }
     .facet-row{ display:flex; flex-wrap:wrap; gap:8px; }
@@ -47,15 +52,32 @@
     .btn-ghost:hover{ background:#f9fafb; }
     .divider{ height:1px; background:#e5e7eb; margin:18px 0; }
 
-    /* ==== Grid.js 表示最適化 ==== */
+    /* ==== テーブルは専用領域でのみ横スクロール ==== */
+    .table-area{
+      margin-top:16px;
+      max-width:100%;
+      overflow-x:auto;  /* 横スクロールはここに閉じ込める */
+      overflow-y:visible;
+      /* gridjsが内部で幅を広げても、ここから外へはみ出させない */
+      contain: content;
+    }
+    /* Grid.js表示最適化（折返し＋スクロール分離） */
+    .gridjs-container{
+      max-width:100%;
+      overflow: visible;   /* 横スクロールは .table-area に任せる */
+    }
+    .gridjs-wrapper{
+      max-width:100%;
+      /* テーブルの実幅に合わせて内部だけ横スクロールさせる */
+      width: max-content;
+    }
     .gridjs-td, .gridjs-th { white-space: normal; }
     .gridjs-td { word-break: break-word; }
-    .gridjs-container { overflow: auto; }
   </style>
 </head>
 
 <body>
-  <h1>CSV / JSON ビューワー（階層タグ絞り込み＋ワイド列）</h1>
+  <h1>CSV / JSON ビューワー（階層タグ＋ワイド列）</h1>
 
   <div class="toolbar">
     <input id="sheetUrl" class="input" type="text"
@@ -105,64 +127,55 @@
     </div>
   </div>
 
-  <div id="table">ファイルを指定して「読み込む」を押してください。</div>
+  <!-- ★ テーブルは独立スクロール領域に変更 ★ -->
+  <div class="table-area">
+    <div id="table">ファイルを指定して「読み込む」を押してください。</div>
+  </div>
 
   <script>
     // ===== 設定 =====
     const DEFAULT_SRC = 'qa_questions_clean.json'; // ←必要に応じて data.csv 等へ
 
-    // 大分類↔中分類の対応（コード表示用）。データ列の値は日本語名でフィルタします。
+    // 大分類↔中分類の対応
     const CATEGORY_MAP = [
-      {
-        code: 'A', name: '個別支援・介入',
-        mids: [
-          { code:'A-1', name:'グレーゾーン対応' },
-          { code:'A-2', name:'自己理解促進' },
-          { code:'A-3', name:'配慮・申請' },
-          { code:'A-4', name:'面談・コミュニケーション' },
-          { code:'A-5', name:'家族との連携' },
-        ]
-      },
-      {
-        code: 'B', name: '進路・企業・雇用',
-        mids: [
-          { code:'B-1', name:'雇用形態の選択' },
-          { code:'B-2', name:'障害者雇用制度' },
-          { code:'B-3', name:'キャリア計画' },
-          { code:'B-4', name:'企業・採用情報' },
-        ]
-      },
-      {
-        code: 'C', name: '支援体制・学内外連携',
-        mids: [
-          { code:'C-1', name:'学内連携・体制' },
-          { code:'C-2', name:'学外連携・リファー' },
-          { code:'C-3', name:'企業との連携' },
-          { code:'C-4', name:'アウトリーチ' },
-        ]
-      },
-      {
-        code: 'D', name: '事例・情報収集',
-        mids: [
-          { code:'D-1', name:'障害別事例' },
-          { code:'D-2', name:'難病・その他事例' },
-          { code:'D-3', name:'就労経験談' },
-          { code:'D-4', name:'学内・外取り組み' },
-        ]
-      }
+      { code:'A', name:'個別支援・介入', mids:[
+        {code:'A-1', name:'グレーゾーン対応'},
+        {code:'A-2', name:'自己理解促進'},
+        {code:'A-3', name:'配慮・申請'},
+        {code:'A-4', name:'面談・コミュニケーション'},
+        {code:'A-5', name:'家族との連携'},
+      ]},
+      { code:'B', name:'進路・企業・雇用', mids:[
+        {code:'B-1', name:'雇用形態の選択'},
+        {code:'B-2', name:'障害者雇用制度'},
+        {code:'B-3', name:'キャリア計画'},
+        {code:'B-4', name:'企業・採用情報'},
+      ]},
+      { code:'C', name:'支援体制・学内外連携', mids:[
+        {code:'C-1', name:'学内連携・体制'},
+        {code:'C-2', name:'学外連携・リファー'},
+        {code:'C-3', name:'企業との連携'},
+        {code:'C-4', name:'アウトリーチ'},
+      ]},
+      { code:'D', name:'事例・情報収集', mids:[
+        {code:'D-1', name:'障害別事例'},
+        {code:'D-2', name:'難病・その他事例'},
+        {code:'D-3', name:'就労経験談'},
+        {code:'D-4', name:'学内・外取り組み'},
+      ]},
     ];
 
-    // その他ファセットに使う列名
+    // その他ファセット
     const FACET_OTHERS = [
       { key: '属性', title: '属性', elId: 'facetAttr' },
       { key: '対象・関係性', title: '対象・関係性', elId: 'facetTarget' },
       { key: '情報カテゴリ', title: '情報カテゴリ', elId: 'facetInfoCat' },
     ];
 
-    // 値の分割に使うセパレータ
+    // 値の分割セパレータ
     const TOKEN_SPLIT = /[,/|｜・;；、\s]+/g;
 
-    // 列幅を広くしたい列名の候補（ゆらぎ吸収）
+    // ワイド列候補（ゆらぎ吸収）
     const WIDE_QUESTION_KEYS = ['質問','質問文','質問（修正）','質問(修正)','questions','Questions'];
     const WIDE_ANSWER_KEYS   = ['回答','回答文','回答（修正）','回答(修正)','回答例','answer','Answer'];
 
@@ -189,10 +202,10 @@
     };
 
     // ===== データ保持 =====
-    let originalRows = [];     // 行はオブジェクト（キー=列名）
-    let allColumns = [];       // テーブル表示列
-    let facetIndex = {};       // { 列名: Map(value -> Set(rowIndex)) }
-    let facetSelections = {    // 選択状態
+    let originalRows = [];
+    let allColumns = [];
+    let facetIndex = {};
+    let facetSelections = {
       '大分類': new Set(),
       '中分類': new Set(),
       '属性': new Set(),
@@ -210,7 +223,7 @@
       });
     };
 
-    // ===== Grid描画（毎回新規mount） =====
+    // ===== Grid描画（テーブル専用スクロール領域内に描画） =====
     const renderGrid = (columnKeys, rowsObjs) => {
       const gridColumns = buildGridColumns(columnKeys);
       const data = rowsObjs.map(r => columnKeys.map(c => r[c] ?? ''));
@@ -247,7 +260,7 @@
       return index;
     };
 
-    // ===== ピルON/OFF UI反映 =====
+    // ===== UI更新/フィルタ =====
     const syncPillUI = () => {
       document.querySelectorAll('.pill').forEach(el => {
         const facet = el.dataset.facet, val = el.dataset.value;
@@ -256,9 +269,7 @@
       });
     };
 
-    // ===== フィルタ適用 =====
     const applyFacetFilter = () => {
-      // 各ファセットは OR、ファセット間は AND
       let candidate = null;
       Object.keys(facetSelections).forEach(facet => {
         const sel = facetSelections[facet];
@@ -278,22 +289,21 @@
       renderGrid(allColumns, filteredRows);
     };
 
-    // ===== クリア =====
     const clearSelections = (keys) => {
       keys.forEach(k => facetSelections[k]?.clear());
       syncPillUI();
-      renderMidFacet(); // 中分類表示が大分類に依存するため再描画
+      renderMidFacet(); // 大分類に応じて中分類を再描画
       applyFacetFilter();
     };
 
-    // ===== 大分類（上部）描画 =====
+    // ===== 大分類描画 =====
     const renderTopFacet = () => {
       const wrap = $('#facetTopRow');
       wrap.innerHTML = '';
       const idx = facetIndex['大分類'] || new Map();
 
       CATEGORY_MAP.forEach(cat => {
-        const valName = cat.name; // データ列での値
+        const valName = cat.name;
         const count = idx.get(valName)?.size || 0;
         const pill = document.createElement('button');
         pill.className = 'pill';
@@ -304,14 +314,14 @@
           const set = facetSelections['大分類'];
           set.has(valName) ? set.delete(valName) : set.add(valName);
           syncPillUI();
-          renderMidFacet(); // 大分類変更→中分類の見せ方更新
+          renderMidFacet();
           applyFacetFilter();
         });
         wrap.appendChild(pill);
       });
     };
 
-    // ===== 中分類（階層表示）描画 =====
+    // ===== 中分類描画（階層） =====
     const renderMidFacet = () => {
       const host = $('#facetMid');
       host.innerHTML = '';
@@ -319,7 +329,6 @@
       const selectedBigs = [...facetSelections['大分類']];
       const midIdx = facetIndex['中分類'] || new Map();
 
-      // 表示する大分類グループを決定（未選択なら全部、選択があればその範囲のみ）
       const groups = (selectedBigs.length > 0)
         ? CATEGORY_MAP.filter(cat => selectedBigs.includes(cat.name))
         : CATEGORY_MAP;
@@ -337,7 +346,7 @@
         row.className = 'facet-row';
 
         cat.mids.forEach(m => {
-          const valName = m.name; // データ列の値
+          const valName = m.name;
           const count = midIdx.get(valName)?.size || 0;
           const pill = document.createElement('button');
           pill.className = 'pill';
@@ -357,13 +366,16 @@
         host.appendChild(g);
       });
 
-      // 見た目のON/OFF更新
       syncPillUI();
     };
 
-    // ===== その他（属性/対象・関係性/情報カテゴリ）描画 =====
+    // ===== その他ファセット描画 =====
     const renderOtherFacets = () => {
-      FACET_OTHERS.forEach(def => {
+      [
+        { key: '属性', elId: 'facetAttr' },
+        { key: '対象・関係性', elId: 'facetTarget' },
+        { key: '情報カテゴリ', elId: 'facetInfoCat' },
+      ].forEach(def => {
         const el = document.getElementById(def.elId);
         el.innerHTML = '';
         const idx = facetIndex[def.key] || new Map();
@@ -386,7 +398,7 @@
       syncPillUI();
     };
 
-    // ===== データロード周り =====
+    // ===== データロード =====
     const normalizeToArrayOfObjects = (data) => {
       let arr = [];
       if (Array.isArray(data)) arr = data;
@@ -435,27 +447,24 @@
         originalRows = arr;
         allColumns = detectColumns(arr);
 
-        // 検索に使う列のインデックス化
         const facetKeys = ['大分類','中分類','属性','対象・関係性','情報カテゴリ'];
         facetIndex = buildFacetIndex(arr, facetKeys);
 
-        // ファセット描画
         renderTopFacet();
         renderMidFacet();
         renderOtherFacets();
 
-        // 初回表
         renderGrid(allColumns, originalRows);
 
-        // クリアボタン
-        $('#clearTop').onclick  = () => clearSelections(['大分類']);
-        $('#clearMid').onclick  = () => clearSelections(['中分類']);
-        $('#clearOthers').onclick = () => clearSelections(['属性','対象・関係性','情報カテゴリ']);
-        $('#clearAll').onclick  = () => clearSelections(['大分類','中分類','属性','対象・関係性','情報カテゴリ']);
+        // クリア系
+        document.getElementById('clearTop').onclick   = () => clearSelections(['大分類']);
+        document.getElementById('clearMid').onclick   = () => clearSelections(['中分類']);
+        document.getElementById('clearOthers').onclick= () => clearSelections(['属性','対象・関係性','情報カテゴリ']);
+        document.getElementById('clearAll').onclick   = () => clearSelections(['大分類','中分類','属性','対象・関係性','情報カテゴリ']);
 
       } catch (e) {
         showError(e.message || String(e));
-        $('#table').textContent = '読み込みに失敗しました。';
+        document.getElementById('table').textContent = '読み込みに失敗しました。';
         console.error(e);
       } finally {
         setLoading(false); loadingPromise = null;
