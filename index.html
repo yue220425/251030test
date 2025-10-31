@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CSV / JSON ビューワー（タグ絞り込み付き）</title>
+  <title>CSV / JSON ビューワー（タグ絞り込み＋ワイド列）</title>
 
   <!-- 外部ライブラリ -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
@@ -47,11 +47,18 @@
     @media (min-width:900px){ .facet-grid{ grid-template-columns: 1fr 1fr; } }
 
     .divider{ height:1px; background:#e5e7eb; margin:18px 0; }
+
+    /* ==== Grid.js 表示最適化 ==== */
+    /* セル内のテキストを折り返す（デフォはnowrap気味） */
+    .gridjs-td, .gridjs-th { white-space: normal; }
+    .gridjs-td { word-break: break-word; }
+    /* テーブルが横に広くなる場合のスクロール */
+    .gridjs-container { overflow: auto; }
   </style>
 </head>
 
 <body>
-  <h1>CSV / JSON ビューワー（タグ絞り込み付き）</h1>
+  <h1>CSV / JSON ビューワー（タグ絞り込み＋ワイド列）</h1>
 
   <div class="toolbar">
     <input id="sheetUrl" class="input" type="text"
@@ -98,6 +105,10 @@
     // 値の分割に使うセパレータ
     const TOKEN_SPLIT = /[,/|｜・;；、\s]+/g;
 
+    // 列幅を広くしたい列名の候補（ゆらぎ吸収）
+    const WIDE_QUESTION_KEYS = ['質問','質問文','質問（修正）','質問(修正)','questions','Questions'];
+    const WIDE_ANSWER_KEYS   = ['回答','回答文','回答（修正）','回答(修正)','回答例','answer','Answer'];
+
     // ===== ユーティリティ =====
     const $ = (sel) => document.querySelector(sel);
     const isJson = (s) => /\.json(\?|#|$)/i.test((s||'').trim());
@@ -114,19 +125,39 @@
 
     // ===== データ保持 =====
     let originalRows = [];   // 行はオブジェクト（キー=列名）
-    let allColumns = [];     // テーブルの列順
+    let allColumns = [];     // テーブルの列順（キーの配列）
     let facetIndex = {};     // { facetKey: Map(value -> Set(rowIndex)) }
     let facetSelections = {}; // { facetKey: Set(selectedValues) }
 
+    // ==== 列メタ生成（Grid.js用）====
+    const buildGridColumns = (columnKeys) => {
+      // 指定列を太め（px指定）に、それ以外は自動
+      const isWideQ = (k) => WIDE_QUESTION_KEYS.includes(k);
+      const isWideA = (k) => WIDE_ANSWER_KEYS.includes(k);
+      return columnKeys.map(k => {
+        if (isWideQ(k) || isWideA(k)) {
+          return { id: k, name: k, width: '520px' }; // ★ワイド化
+        }
+        return { id: k, name: k }; // デフォルト
+      });
+    };
+
     // ===== 表示（Grid.jsは毎回新しいmountに描画） =====
-    const renderGrid = (columns, rows) => {
+    const renderGrid = (columnKeys, rowsObjs) => {
+      // Grid.jsに渡す列メタ
+      const gridColumns = buildGridColumns(columnKeys);
+
+      // dataは配列の配列で渡す（列順はcolumnKeysに合わせる）
+      const data = rowsObjs.map(r => columnKeys.map(c => r[c] ?? ''));
+
       const host = document.getElementById('table');
       host.innerHTML = '';
       const mount = document.createElement('div');
       host.appendChild(mount);
+
       const grid = new gridjs.Grid({
-        columns,
-        data: rows.map(r => columns.map(c => r[c] ?? '')),
+        columns: gridColumns,
+        data,
         search: { enabled: true, placeholder: '検索...' },
         sort: true,
         pagination: { enabled: true, limit: 20 },
@@ -150,9 +181,7 @@
     // ===== ファセットの作成 =====
     const buildFacetIndex = (rows, facetDefs) => {
       const index = {};
-      facetDefs.forEach(f => {
-        index[f.key] = new Map(); // value -> Set(rowIndex)
-      });
+      facetDefs.forEach(f => index[f.key] = new Map());
       rows.forEach((row, i) => {
         facetDefs.forEach(f => {
           const vals = toTokens(row[f.key]);
@@ -168,7 +197,6 @@
 
     // ===== ファセットUIの描画 =====
     const renderFacetUI = () => {
-      // 初期選択状態
       FACETS.forEach(f => { facetSelections[f.key] = facetSelections[f.key] || new Set(); });
 
       // 大分類（トップ）
@@ -176,12 +204,9 @@
       const topRow = $('#facetTopRow');
       topRow.innerHTML = '';
       if (topDef && facetIndex[topDef.key]) {
-        const entries = [...facetIndex[topDef.key].entries()];
-        // 出現数の多い順に並べ、上位4つをボタンに（4より多くても全部出してOKにしておく）
-        entries.sort((a,b)=> b[1].size - a[1].size);
-        // 要件通り4つに限定したい場合は .slice(0,4) を有効化
-        // const showEntries = entries.slice(0,4);
-        const showEntries = entries; // ←4つ固定にしたいなら↑に変更
+        const entries = [...facetIndex[topDef.key].entries()].sort((a,b)=> b[1].size - a[1].size);
+        // const showEntries = entries.slice(0,4); // 4固定にしたい場合はこちらを使用
+        const showEntries = entries;
         showEntries.forEach(([val, set]) => {
           const pill = document.createElement('button');
           pill.className = 'pill';
@@ -256,24 +281,16 @@
 
     // ===== フィルタ適用 =====
     const applyFacetFilter = () => {
-      // 各ファセットで選択がある場合、その値の行インデックス集合を OR 結合
-      // ファセット間は AND で積集合
       let candidate = null; // Set(index)
       FACETS.forEach(f => {
         const sel = facetSelections[f.key];
-        if (!sel || sel.size === 0) return; // 選択なし→無視
-        // OR: 選択された値それぞれの Set を合成
+        if (!sel || sel.size === 0) return;
         const orSet = new Set();
         sel.forEach(v => {
           const s = facetIndex[f.key]?.get(v);
           if (s) s.forEach(i => orSet.add(i));
         });
-        if (candidate == null) {
-          candidate = orSet;
-        } else {
-          // AND: 既存候補と積集合
-          candidate = new Set([...candidate].filter(i => orSet.has(i)));
-        }
+        candidate = (candidate == null) ? orSet : new Set([...candidate].filter(i => orSet.has(i)));
       });
 
       const filteredRows = (candidate == null)
@@ -285,15 +302,12 @@
 
     // ===== ローダー =====
     const normalizeToArrayOfObjects = (data) => {
-      // data: CSVなら Papa.parse(...).data（header:true）, JSONなら配列または {data:[...]}
       let arr = [];
       if (Array.isArray(data)) arr = data;
       else if (Array.isArray(data?.data)) arr = data.data;
       else if (Array.isArray(data?.rows) && Array.isArray(data?.header)) {
-        // もし {header:[...], rows:[[...], ...]} の形式が来たら、オブジェクトに変換
         arr = data.rows.map(r => Object.fromEntries(data.header.map((h,idx)=>[h, r[idx]])));
       }
-      // すべて文字列化（Gridの見た目安定用）
       arr = arr.map(o => {
         const out = {};
         Object.keys(o||{}).forEach(k => out[k] = (o[k]==null ? '' : String(o[k])));
@@ -336,9 +350,8 @@
         originalRows = arr;
         allColumns = detectColumns(arr);
 
-        // ファセットのためのインデックスを作成（存在しない列は自動で空）
+        // ファセットのためのインデックスを作成
         facetIndex = buildFacetIndex(arr, FACETS);
-        // 既存の選択は維持（初回は空）
         renderFacetUI();
 
         // 初期描画（絞り込みなし）
@@ -362,7 +375,7 @@
       if (e.key === 'Enter') { e.preventDefault(); document.getElementById('loadBtn').click(); }
     });
 
-    // ===== 初期化：#src= または DEFAULT_SRC を自動読込 =====
+    // ===== 初期化：#src= または DEFAULT_SRC 自動読込 =====
     (async () => {
       const fromHash = parseQueryHash();
       const initial = fromHash || DEFAULT_SRC;
@@ -373,4 +386,3 @@
   </script>
 </body>
 </html>
-
