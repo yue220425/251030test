@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CSV / JSON ビューワー（カード表示・階層タグ対応）</title>
+  <title>CSV / JSON ビューワー（カード表示・階層タグ対応・Q/A強調）</title>
 
   <!-- CSVパース用のみ -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
@@ -14,6 +14,10 @@
       --pill-on-bg:#111827; --pill-on-bd:#111827; --pill-on-tx:#fff;
       --pill-hover:#e5e7eb;
       --card-bd:#e5e7eb; --card-bg:#fff; --muted:#6b7280; --tag-bg:#eef2ff;
+      /* Qは「薄いグリーンと青の間」→青緑（やや濃いめで可読性UP） */
+      --q-color:#0ea5a8;  /* teal-500 近似 */
+      /* Aは赤系（やや濃いめで可読性UP） */
+      --a-color:#dc2626;  /* red-600 近似 */
     }
     body{
       max-width: 1100px; margin: 24px auto; padding: 0 12px;
@@ -54,14 +58,26 @@
       background:var(--card-bg); border:1px solid var(--card-bd); border-radius:12px;
       padding:14px; box-shadow:0 1px 2px rgba(0,0,0,.03);
     }
-    .qa{
-      display:grid; gap:8px;
-    }
-    .qa .q, .qa .a{
+    .qa{ display:grid; gap:8px; }
+
+    /* Q/A ボックス（左に同色アクセントライン） */
+    .qa-block{
       background:#fff; border:1px solid #eee; border-radius:10px; padding:10px 12px;
+      display:flex; gap:10px; align-items:flex-start;
     }
+    .q.qa-block{ border-left:4px solid var(--q-color); }
+    .a.qa-block{ border-left:4px solid var(--a-color); }
+
+    /* 先頭のQ. / A. を大きく＆色分け */
+    .mark{
+      font-weight:800; font-size:22px; line-height:1; margin-top:2px; flex:0 0 auto;
+      letter-spacing:.5px;
+    }
+    .mark.q{ color:var(--q-color); }
+    .mark.a{ color:var(--a-color); }
+
     .qa .label{ font-size:12px; color:var(--muted); margin-bottom:4px; font-weight:600; }
-    .qa .text{ white-space:pre-wrap; word-break:break-word; line-height:1.6; }
+    .qa .text{ white-space:pre-wrap; word-break:break-word; line-height:1.7; font-size:15px; }
 
     .meta{
       margin-top:10px;
@@ -70,15 +86,10 @@
     @media(min-width:720px){
       .meta{ grid-template-columns: 1fr 1fr; }
     }
-    .kv{
-      background:#fff; border:1px solid #f0f0f0; border-radius:10px; padding:8px 10px;
-    }
+    .kv{ background:#fff; border:1px solid #f0f0f0; border-radius:10px; padding:8px 10px; }
     .kv .k{ font-size:12px; color:var(--muted); margin-bottom:6px; font-weight:600; }
     .tags{ display:flex; flex-wrap:wrap; gap:6px; }
-    .tag{
-      padding:3px 8px; border-radius:999px; background:var(--tag-bg); border:1px solid #dbe4ff;
-      font-size:12px;
-    }
+    .tag{ padding:3px 8px; border-radius:999px; background:var(--tag-bg); border:1px solid #dbe4ff; font-size:12px; }
 
     /* ページネーション */
     .pager{
@@ -90,7 +101,7 @@
 </head>
 
 <body>
-  <h1>CSV / JSON ビューワー（カード表示・階層タグ対応）</h1>
+  <h1>CSV / JSON ビューワー（カード表示・階層タグ対応・Q/A強調）</h1>
 
   <div class="toolbar">
     <input id="sheetUrl" class="input" type="text" placeholder="例）qa_questions_clean.json / data.csv（同階層） / 公開URL" />
@@ -142,7 +153,7 @@
     const QUESTION_KEYS = ['質問','質問文','質問（修正）','質問(修正)','questions','Questions'];
     const ANSWER_KEYS   = ['回答','回答文','回答（修正）','回答(修正)','回答例','answer','Answer'];
 
-    // カード下段で横スクロール無しに必ず見せるメタ情報
+    // カード下段メタ
     const META_DEF = [
       { key:'大分類', label:'大分類' },
       { key:'中分類', label:'中分類' },
@@ -209,9 +220,6 @@
     // ===== データ保持 =====
     let originalRows = [];
     let filteredRows = [];
-    let allColumns = [];
-
-    // インデックスと選択状態
     let facetIndex = {};
     let facetSelections = {
       '大分類': new Set(),
@@ -264,23 +272,29 @@
         const card = document.createElement('div');
         card.className = 'card';
 
-        // 上段：質問・回答
+        // 上段：質問・回答（Q./A. を先頭に大きめ表示）
         const qa = document.createElement('div');
         qa.className = 'qa';
 
         const qBox = document.createElement('div');
-        qBox.className = 'q';
-        qBox.innerHTML = `<div class="label">質問</div><div class="text">${escapeHtml(q)}</div>`;
+        qBox.className = 'q qa-block';
+        qBox.innerHTML = `
+          <span class="mark q" aria-hidden="true">Q.</span>
+          <div class="text">${escapeHtml(q)}</div>
+        `;
 
         const aBox = document.createElement('div');
-        aBox.className = 'a';
-        aBox.innerHTML = `<div class="label">回答</div><div class="text">${escapeHtml(a)}</div>`;
+        aBox.className = 'a qa-block';
+        aBox.innerHTML = `
+          <span class="mark a" aria-hidden="true">A.</span>
+          <div class="text">${escapeHtml(a)}</div>
+        `;
 
         qa.appendChild(qBox);
         qa.appendChild(aBox);
         card.appendChild(qa);
 
-        // 下段：メタ（2カラム→狭いと1カラム）
+        // 下段：メタ（2カラム→狭い画面は1カラム）
         const meta = document.createElement('div');
         meta.className = 'meta';
 
@@ -325,25 +339,20 @@
       }
 
       // ページャ更新
-      const pager = $('#pager');
-      const info = $('#pagerInfo');
+      const pager = document.getElementById('pager');
+      const info = document.getElementById('pagerInfo');
       if (rows.length > PAGE_SIZE) {
         pager.hidden = false;
         info.textContent = `${rows.length}件中 ${start+1}–${end}件を表示`;
-        $('#prevBtn').disabled = (page === 1);
-        $('#nextBtn').disabled = (end >= rows.length);
+        document.getElementById('prevBtn').disabled = (page === 1);
+        document.getElementById('nextBtn').disabled = (end >= rows.length);
       } else {
         pager.hidden = true;
       }
     };
 
     // エスケープ（最低限）
-    const escapeHtml = (s) => {
-      return String(s)
-        .replace(/&/g,'&amp;')
-        .replace(/</g,'&lt;')
-        .replace(/>/g,'&gt;');
-    };
+    const escapeHtml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
     // ===== UI（ピル） =====
     const syncPillUI = () => {
@@ -354,7 +363,7 @@
     };
 
     const renderTopFacet = () => {
-      const wrap = $('#facetTopRow'); wrap.innerHTML = '';
+      const wrap = document.getElementById('facetTopRow'); wrap.innerHTML = '';
       const idx = facetIndex['大分類'] || new Map();
       CATEGORY_MAP.forEach(cat => {
         const valName = cat.name;
@@ -375,7 +384,7 @@
     };
 
     const renderMidFacet = () => {
-      const host = $('#facetMid'); host.innerHTML = '';
+      const host = document.getElementById('facetMid'); host.innerHTML = '';
       const selectedBigs = [...facetSelections['大分類']];
       const midIdx = facetIndex['中分類'] || new Map();
 
@@ -405,7 +414,11 @@
     };
 
     const renderOtherFacets = () => {
-      FACET_OTHERS.forEach(def => {
+      [
+        { key: '属性', elId: 'facetAttr' },
+        { key: '対象・関係性', elId: 'facetTarget' },
+        { key: '情報カテゴリ', elId: 'facetInfoCat' },
+      ].forEach(def => {
         const el = document.getElementById(def.elId);
         el.innerHTML = '';
         const idx = facetIndex[def.key] || new Map();
@@ -438,7 +451,7 @@
         candidate = (candidate==null) ? orSet : new Set([...candidate].filter(i => orSet.has(i)));
       }
       filteredRows = (candidate==null) ? originalRows : [...candidate].sort((a,b)=>a-b).map(i => originalRows[i]);
-      page = 1;             // 絞り込み時は1ページ目へ
+      page = 1;
       renderCards(filteredRows);
     };
 
@@ -452,8 +465,6 @@
       }
       return arr.map(o => { const out={}; Object.keys(o||{}).forEach(k=> out[k]=(o[k]==null?'':String(o[k])) ); return out; });
     };
-    const detectColumns = (arr) => { const s=new Set(); arr.forEach(o=>Object.keys(o||{}).forEach(k=>s.add(k))); return [...s]; };
-
     const loadCsv  = async (url) => { const r=await fetch(url,{cache:'no-store'}); if(!r.ok) throw new Error(`CSV取得に失敗しました (${r.status})`); const t=await r.text(); const p=Papa.parse(t,{header:true, skipEmptyLines:true}); return normalizeToArrayOfObjects(p.data); };
     const loadJson = async (url) => { const r=await fetch(url,{cache:'no-store'}); if(!r.ok) throw new Error(`JSON取得に失敗しました (${r.status})`); const j=await r.json(); return normalizeToArrayOfObjects(j); };
 
@@ -468,7 +479,6 @@
 
         originalRows = arr;
         filteredRows = arr;
-        allColumns = detectColumns(arr);
 
         facetIndex = buildFacetIndex(arr);
         renderTopFacet();
@@ -479,14 +489,14 @@
         renderCards(filteredRows);
 
         // クリア
-        $('#clearTop').onclick    = () => { facetSelections['大分類'].clear(); renderMidFacet(); applyFacetFilter(); };
-        $('#clearMid').onclick    = () => { facetSelections['中分類'].clear(); applyFacetFilter(); };
-        $('#clearOthers').onclick = () => { ['属性','対象・関係性','情報カテゴリ'].forEach(k=>facetSelections[k].clear()); applyFacetFilter(); };
-        $('#clearAll').onclick    = () => { Object.keys(facetSelections).forEach(k=>facetSelections[k].clear()); renderMidFacet(); applyFacetFilter(); };
+        document.getElementById('clearTop').onclick    = () => { facetSelections['大分類'].clear(); renderMidFacet(); applyFacetFilter(); };
+        document.getElementById('clearMid').onclick    = () => { facetSelections['中分類'].clear(); applyFacetFilter(); };
+        document.getElementById('clearOthers').onclick = () => { ['属性','対象・関係性','情報カテゴリ'].forEach(k=>facetSelections[k].clear()); applyFacetFilter(); };
+        document.getElementById('clearAll').onclick    = () => { Object.keys(facetSelections).forEach(k=>facetSelections[k].clear()); renderMidFacet(); applyFacetFilter(); };
 
       } catch(e){
         showError(e.message || String(e));
-        $('#cards').innerHTML = '';
+        document.getElementById('cards').innerHTML = '';
         console.error(e);
       } finally {
         setLoading(false); loadingPromise = null;
