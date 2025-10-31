@@ -1,215 +1,178 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>質問集デモビューア</title>
+  <title>CSV / JSON ビューワー</title>
+
+  <!-- 外部ライブラリ -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/gridjs/dist/theme/mermaid.min.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/gridjs/dist/gridjs.umd.js"></script>
+
   <style>
-    :root { --bg: #0f172a; --card: #111827; --muted:#94a3b8; --text:#e5e7eb; --accent:#22d3ee; }
-    html,body{height:100%;}
-    body{margin:0;background:linear-gradient(180deg,#0b1220,#0f172a);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Hiragino Kaku Gothic ProN",Meiryo,sans-serif;}
-    .wrap{max-width:960px;margin:32px auto;padding:0 16px;}
-    .card{background:rgba(17,24,39,.7);backdrop-filter: blur(6px); border:1px solid rgba(255,255,255,.08); border-radius:16px; padding:20px; box-shadow:0 10px 30px rgba(0,0,0,.25)}
-    h1{font-size:clamp(20px,2.8vw,28px);margin:0 0 12px 0}
-    .muted{color:var(--muted)}
-    .controls{display:grid; gap:10px; grid-template-columns:1fr;}
-    .controls input[type="text"], .controls input[type="url"]{width:100%; padding:12px 14px; background:#0b1020; border:1px solid #263044; color:var(--text); border-radius:12px; outline:none}
-    .controls .row{display:grid; gap:10px; grid-template-columns:1fr auto; align-items:center}
-    .btn{appearance:none;border:1px solid #2b354a;background:#0d1628;color:var(--text);padding:10px 14px;border-radius:12px;cursor:pointer}
-    .btn:hover{border-color:#3b4763}
-    .grid{margin-top:16px; display:grid; gap:10px}
-    .item{border:1px solid #23304a; border-radius:14px; overflow:hidden; background:#0c1323}
-    .head{display:flex; gap:10px; align-items:flex-start; padding:12px 14px}
-    .id{flex:0 0 auto; font-weight:700; color:#9be8f7; background:#04202a; border:1px solid #113a47; padding:4px 8px; border-radius:8px;}
-    .title{flex:1 1 auto}
-    .title .clip{display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
-    details{border-top:1px solid #1b2336}
-    details[open]{background:#0a1020}
-    summary{list-style:none; padding:12px 14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center}
-    summary::-webkit-details-marker{display:none}
-    .count{font-variant-numeric: tabular-nums;}
-    .pill{display:inline-flex;align-items:center;gap:6px; padding:6px 10px; border:1px solid #26465a; background:#06121c; border-radius:999px; font-size:12px; color:#a7c3d8}
-    .flex{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
-    .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; background:#0e1a2c; border:1px solid #283a5a; padding:2px 6px; border-radius:6px; color:#cdd9ed}
-    .footer{margin-top:18px; font-size:12px}
-    .loading{margin-top:14px;color:#bfe7ff}
-    .danger{color:#fda4af}
+    body { max-width: 1000px; margin: 24px auto; padding: 0 12px; font-family: system-ui, -apple-system, Segoe UI, Roboto, "Hiragino Kaku Gothic ProN", Meiryo, sans-serif; }
+    .toolbar { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+    .input { width: 100%; padding: 10px 12px; border: 1px solid #d0d7de; border-radius: 8px; }
+    .btn { padding: 10px 16px; border: 1px solid #111; background: #111; color: #fff; border-radius: 8px; cursor: pointer; }
+    .btn:disabled { opacity: .6; cursor: not-allowed; }
+    .hint { color: #666; font-size: 12px; margin-top: 6px; }
+    .error { color: #b00020; margin: 8px 0 0; }
+    #table { margin-top: 16px; }
   </style>
 </head>
+
 <body>
-  <div class="wrap">
-    <div class="card">
-      <h1>質問集デモビューア</h1>
-      <div class="muted">JSON/CSVから読み込み（同一フォルダの JSON を自動読込可）。全文検索＆クリックで詳細展開。無料・静的1ファイルで動きます。</div>
-      <div style="height:8px"></div>
-      <div class="controls">
-        <div class="row">
-          <input id="sheetUrl" type="url" placeholder=\"① データURL（JSON/CSV。相対パスOK：qa_questions_clean.json）\" />
-          <button id="loadBtn" class="btn">読み込む</button>
-        </div>
-        <input id="q" type="text" placeholder="② キーワードで検索（例：ロールモデル / 配慮 / グレーゾーン）」/>
-        <div class="flex">
-          <label class="pill"><input type="checkbox" id="caseSensitive"/> 大文字小文字を区別</label>
-          <label class="pill"><input type="checkbox" id="regex"/> 正規表現で検索</label>
-          <span class="pill count" id="stats">0件</span>
-          <label class="pill"><input type="file" id="csvFile" accept=".csv"/> ローカルCSVを試す</label>
-        </div>
-      </div>
-      <div id="loading" class="loading" hidden>読み込み中…</div>
-      <div id="error" class="loading danger" hidden></div>
-      <div id="list" class="grid" aria-live="polite"></div>
-      <div class="footer muted">使い方：<span class="kbd">Ctrl/⌘ + F</span>ではなく、上の検索ボックスを使うと全文検索できます。CSVの列名は <span class="kbd">ID</span> と <span class="kbd">questions</span> を想定（他の列でも読み込みは可能）。</div>
-    </div>
+  <h1>CSV / JSON ビューワー</h1>
+
+  <div class="toolbar">
+    <input id="sheetUrl" class="input" type="text"
+      placeholder="例）data.csv（同階層） / https://example.com/data.csv または data.json のURL" />
+    <button id="loadBtn" class="btn">読み込む</button>
   </div>
+  <div class="hint">同一オリジンのファイル推奨（GitHub Pagesなら <code>index.html</code> と同階層に <code>data.csv</code> を置く）</div>
+  <div id="status" class="error"></div>
 
-  <!-- パーサ（Googleスプレッドシートの公開CSV対応） -->
-  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <div id="table">ファイルを指定して「読み込む」を押してください。</div>
+
   <script>
-    const listEl = document.getElementById('list');
-    const statsEl = document.getElementById('stats');
-    const loadingEl = document.getElementById('loading');
-    const errorEl = document.getElementById('error');
-    const qEl = document.getElementById('q');
-    const caseEl = document.getElementById('caseSensitive');
-    const regexEl = document.getElementById('regex');
+    // ===== 設定 =====
+    // 初期表示で自動読込する既定の相対パス。必要に応じて qa_questions_clean.json 等に変更可。
+    const DEFAULT_SRC = 'data.csv';
 
-    // 既定の自動読込先（同じフォルダに配置した JSON を想定）
-    const DEFAULT_SRC = 'qa_questions_clean.json';
+    // ===== ユーティリティ =====
+    const $ = (sel) => document.querySelector(sel);
+    const isJson = (s) => /\.json(\?|#|$)/i.test(s.trim());
 
-    // JSONローダ
-    function loadJson(url){
-      loading(true);
-      fetch(url, {cache:'no-store'})
-        .then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.text(); })
-        .then(t=>{
-          // NaN/Infinity を null に補正してからパース
-          const safe = t.replace(/NaN/g,'null').replace(/Infinity/g,'null').replace(/-?Infinity/g,'null');
-          const data = JSON.parse(safe);
-          onParsed({ data });
-        })
-        .catch(err=> showError('読み込みに失敗しました: ' + err.message));
-    }
+    const showError = (msg) => {
+      $('#status').textContent = msg || '';
+    };
 
-    function isJson(u){ const s = String(u||'').toLowerCase(); return s.endsWith('.json') || s.includes('.json?'); }
+    const setLoading = (loading) => {
+      $('#loadBtn').disabled = !!loading;
+      $('#table').setAttribute('aria-busy', loading ? 'true' : 'false');
+    };
 
-    let rows = [];      // 全データ
-    let view = [];      // 絞り込み後
-    let cols = [];      // 列名
+    const parseQueryHash = () => {
+      // URLハッシュ #src=... を拾う
+      const h = location.hash.slice(1);
+      if (!h) return null;
+      const params = new URLSearchParams(h);
+      return params.get('src');
+    };
 
-    function debounce(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t = setTimeout(()=>fn(...a), ms); } }
+    const updateHash = (src) => {
+      history.replaceState(null, '', '#src=' + encodeURIComponent(src));
+    };
 
-    function render(items){
-      listEl.innerHTML = '';
-      const frag = document.createDocumentFragment();
-      items.forEach((r, i) => {
-        const id = r.ID ?? r.id ?? r.Id ?? r[cols[0]] ?? String(i+1);
-        const text = r.questions ?? r.Question ?? r.TEXT ?? r[cols[1]] ?? '';
-        const item = document.createElement('div');
-        item.className = 'item';
-        item.id = 'q-' + (id+'').replace(/[^\w-]+/g,'');
-        item.innerHTML = `
-          <div class="head">
-            <div class="id">${escapeHtml(id)}</div>
-            <div class="title"><div class="clip">${escapeHtml(text)}</div></div>
-          </div>
-          <details>
-            <summary>詳細を表示</summary>
-            <div style="padding:12px 14px; white-space:pre-wrap; line-height:1.6">${escapeHtml(text)}</div>
-          </details>`;
-        frag.appendChild(item);
-      });
-      listEl.appendChild(frag);
-      statsEl.textContent = `${items.length}件`;
-    }
+    // ===== レンダリング =====
+    let gridInstance = null;
 
-    function escapeHtml(s){ return (s==null?''+s:s+'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
-
-    const applyFilter = debounce(() => {
-      const term = qEl.value.trim();
-      if(!term){ view = rows.slice(); render(view); return; }
-      try{
-        let pred;
-        if(regexEl.checked){
-          const flags = caseEl.checked ? 'u' : 'iu';
-          const re = new RegExp(term, flags);
-          pred = (t)=> re.test(t);
-        }else{
-          const needle = caseEl.checked ? term : term.toLowerCase();
-          pred = (t)=> (caseEl.checked? t : t.toLowerCase()).includes(needle);
+    const renderGrid = (columns, rows) => {
+      // 既存のGridを破棄
+      if (gridInstance && gridInstance.destroy) {
+        gridInstance.destroy();
+        gridInstance = null;
+      }
+      // Grid.js に渡す
+      gridInstance = new gridjs.Grid({
+        columns,
+        data: rows,
+        search: { enabled: true, placeholder: '検索...' },
+        sort: true,
+        pagination: { enabled: true, limit: 20 },
+        language: {
+          search: { placeholder: '検索...' },
+          pagination: {
+            previous: '前',
+            next: '次',
+            showing: '表示中',
+            results: '件'
+          }
         }
-        view = rows.filter(r => pred((r.questions ?? r.Question ?? r.TEXT ?? r[cols[1]] ?? '').toString()));
-        render(view);
-      }catch(err){ errorEl.hidden=false; errorEl.textContent = '検索エラー: ' + err.message; }
-    }, 120);
+      });
+      gridInstance.render(document.getElementById('table'));
+    };
 
-    qEl.addEventListener('input', applyFilter);
-    caseEl.addEventListener('change', applyFilter);
-    regexEl.addEventListener('change', applyFilter);
+    const normalizeToGrid = (objArray) => {
+      if (!Array.isArray(objArray) || objArray.length === 0) {
+        return { columns: [], rows: [] };
+      }
+      const columns = Array.from(
+        objArray.reduce((set, row) => {
+          Object.keys(row || {}).forEach(k => set.add(k));
+          return set;
+        }, new Set())
+      );
+      const rows = objArray.map(r => columns.map(c => (r && r[c] != null) ? String(r[c]) : ''));
+      return { columns, rows };
+    };
 
+    // ===== ローダー =====
+    const loadCsv = async (url) => {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`CSV取得に失敗しました (${res.status})`);
+      const text = await res.text();
+      const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
+      const { columns, rows } = normalizeToGrid(parsed.data);
+      if (!columns.length) throw new Error('CSVに表示できる列がありません');
+      renderGrid(columns, rows);
+    };
+
+    const loadJson = async (url) => {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`JSON取得に失敗しました (${res.status})`);
+      const data = await res.json();
+      // JSONは配列のオブジェクトを想定（例：[{ID: "...", questions: "..."}]）
+      const arr = Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data : []);
+      if (!Array.isArray(arr) || !arr.length) throw new Error('JSONの配列データが見つかりません');
+      const { columns, rows } = normalizeToGrid(arr);
+      renderGrid(columns, rows);
+    };
+
+    const loadBySrc = async (src) => {
+      showError('');
+      setLoading(true);
+      try {
+        if (isJson(src)) {
+          await loadJson(src);
+        } else {
+          await loadCsv(src);
+        }
+      } catch (e) {
+        showError(e.message || String(e));
+        $('#table').textContent = '読み込みに失敗しました。';
+        console.error(e);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    // ===== イベント =====
     document.getElementById('loadBtn').addEventListener('click', () => {
       const raw = document.getElementById('sheetUrl').value.trim();
-      if(!raw){ showError('データURLを入力してください'); return; }
-      if(isJson(raw)) loadJson(raw); else loadCsv(raw);
-      history.replaceState(null, '', '#src=' + encodeURIComponent(raw));
-    });
-      if(!url){ showError('CSVの公開URLを入力してください'); return; }
-      loadCsv(url);
-      history.replaceState(null, '', '#src=' + encodeURIComponent(url));
+      if (!raw) { showError('データURLを入力してください'); return; }
+      loadBySrc(raw);
+      updateHash(raw);
     });
 
-    document.getElementById('csvFile').addEventListener('change', (e)=>{
-      const file = e.target.files?.[0];
-      if(!file) return;
-      loading(true);
-      Papa.parse(file, { header:true, skipEmptyLines:true, complete: onParsed, error: onPapaError });
-    });
-
-    function loading(b){ loadingEl.hidden = !b; errorEl.hidden = true; }
-    function showError(msg){ loading(false); errorEl.hidden=false; errorEl.textContent = msg; }
-
-    function loadCsv(url){
-      loading(true);
-      Papa.parse(url, { download:true, header:true, skipEmptyLines:true, complete:onParsed, error:onPapaError });
-    }
-
-    function onParsed(res){
-      loading(false);
-      if(!res?.data?.length){ showError('データが空でした'); return; }
-      rows = res.data.map(r=>fixRow(r));
-      cols = Object.keys(rows[0]||{});
-      view = rows.slice();
-      render(view);
-    }
-
-    function onPapaError(err, file, inputElem, reason){
-      showError('読み込みに失敗しました: ' + (err?.message || reason || '未知のエラー'));
-    }
-
-    function fixRow(obj){
-      // 1列しか無い場合にTSV/改行混入を救済
-      const keys = Object.keys(obj);
-      if(keys.length===1){
-        const k = keys[0];
-        const v = obj[k];
-        // ID\ttext 形式などを推定分割
-        const m = typeof v === 'string' ? v.split(/\t|\s{2,}/) : null;
-        if(m && m.length>=2){ return { ID:m[0], questions:m.slice(1).join(' ') }; }
+    // Enterキーで読み込み
+    document.getElementById('sheetUrl').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        $('#loadBtn').click();
       }
-      return obj;
-    }
+    });
 
-    // URLハッシュにCSVが入っていたら自動ロード
-    (function initFromHash(){
-      const m = location.hash.match(/#src=([^]+)$/);
-      if(m){
-        const u = decodeURIComponent(m[1]);
-        document.getElementById('sheetUrl').value = u;
-        if(isJson(u)) loadJson(u); else loadCsv(u);
-      } else if (DEFAULT_SRC){
-        document.getElementById('sheetUrl').value = DEFAULT_SRC;
-        loadJson(DEFAULT_SRC);
-      }
+    // ===== 初期化：#src= または DEFAULT_SRC を自動読込 =====
+    (async () => {
+      const fromHash = parseQueryHash();
+      const initial = fromHash || DEFAULT_SRC; // 例: 'data.csv'
+      $('#sheetUrl').value = initial;
+      await loadBySrc(initial);
+      updateHash(initial);
     })();
   </script>
 </body>
 </html>
+
